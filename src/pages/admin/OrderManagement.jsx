@@ -21,8 +21,8 @@ function formatStatus(status) {
 }
 
 function formatDateTime(value) {
-  if (!value?.toDate) return 'Just now'
-  return new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeStyle: 'short' }).format(value.toDate())
+  const date = value?.toDate?.() ?? new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
 function OrderManagement() {

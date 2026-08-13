@@ -41,9 +41,9 @@ function Reports() {
   const { analytics, error, isLoading, range } = useReportsAnalytics({ customEnd, customStart, dateFilter })
 
   const metrics = useMemo(() => [
-    [formatCurrency(analytics.summary.totalRevenue), 'Today’s revenue', 'Served orders in selected period'],
+    [formatCurrency(analytics.summary.totalRevenue), 'Revenue', 'Paid orders in selected period'],
     [analytics.summary.totalOrders, 'Today’s orders', 'Orders created in selected period'],
-    [formatCurrency(analytics.summary.averageOrderValue), 'Average order value', 'Across served orders'],
+    [formatCurrency(analytics.summary.averageOrderValue), 'Average order value', 'Across paid orders'],
     [analytics.summary.activeTables, 'Active tables', `${analytics.summary.activeTableRecords} enabled in setup`],
     [analytics.summary.completedOrders, 'Completed orders', 'Served orders'],
     [analytics.summary.cancelledOrders, 'Cancelled orders', 'Cancelled in selected period'],
@@ -99,11 +99,11 @@ function Reports() {
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
-        <article className="surface-card p-5 sm:p-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-extrabold">Sales performance</h2><p className="mt-1 text-sm text-slate-500">Daily served revenue for the selected period.</p></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-700">{formatCurrency(analytics.summary.totalRevenue)}</span></div>{analytics.salesByDay.length > 0 ? <BarChart data={analytics.salesByDay} formatValue={formatCurrency} title="Daily revenue" /> : <p className="py-16 text-center text-sm text-slate-500">No revenue data for this period.</p>}</article>
+        <article className="surface-card p-5 sm:p-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-extrabold">Sales performance</h2><p className="mt-1 text-sm text-slate-500">Daily paid revenue for the selected period.</p></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-700">{formatCurrency(analytics.summary.totalRevenue)}</span></div>{analytics.salesByDay.length > 0 ? <BarChart data={analytics.salesByDay} formatValue={formatCurrency} title="Daily revenue" /> : <p className="py-16 text-center text-sm text-slate-500">No revenue data for this period.</p>}</article>
         <article className="surface-card p-5 sm:p-6"><h2 className="text-lg font-extrabold">Order status</h2><p className="mt-1 text-sm text-slate-500">Order distribution for this period.</p><div className="mt-6"><DonutChart data={analytics.statusCounts} title="Order status distribution" /></div></article>
       </section>
 
-      <section><div className="mb-3"><h2 className="text-lg font-extrabold">Sales analytics</h2><p className="mt-1 text-sm text-slate-500">Served revenue across the current calendar periods.</p></div><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[['Daily revenue', analytics.salesTotals.daily], ['Weekly revenue', analytics.salesTotals.weekly], ['Monthly revenue', analytics.salesTotals.monthly], ['Yearly revenue', analytics.salesTotals.yearly]].map(([label, value]) => <MetricCard key={label} label={label} value={formatCurrency(value)} />)}</div></section>
+      <section><div className="mb-3"><h2 className="text-lg font-extrabold">Sales analytics</h2><p className="mt-1 text-sm text-slate-500">Paid revenue across the current calendar periods.</p></div><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[['Daily revenue', analytics.salesTotals.daily], ['Weekly revenue', analytics.salesTotals.weekly], ['Monthly revenue', analytics.salesTotals.monthly], ['Yearly revenue', analytics.salesTotals.yearly]].map(([label, value]) => <MetricCard key={label} label={label} value={formatCurrency(value)} />)}</div></section>
 
       <section className="grid gap-6 xl:grid-cols-2">
         <article className="surface-card overflow-hidden"><div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6"><div><h2 className="text-lg font-extrabold">Top selling foods</h2><p className="mt-1 text-sm text-slate-500">Top 10 items by quantity sold.</p></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-700">Top 10</span></div>{analytics.topFoods.length === 0 ? <p className="p-6 text-sm text-slate-500">No completed food sales for this period.</p> : <div className="divide-y divide-slate-100">{analytics.topFoods.map((food, index) => <div className="flex items-center gap-3 p-4 transition hover:bg-slate-50" key={food.name}><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-sm font-extrabold text-orange-600">{index + 1}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-800">{food.name}</p><p className="mt-1 text-xs text-slate-400">{food.quantity} sold</p></div><span className="whitespace-nowrap text-sm font-extrabold text-slate-800">{formatCurrency(food.revenue)}</span></div>)}</div>}</article>

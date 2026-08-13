@@ -55,8 +55,12 @@ export function getOrderNumber(order) {
 }
 
 export function downloadCsv(filename, rows) {
-  const escapeCell = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`
-  const content = rows.map((row) => row.map(escapeCell).join(',')).join('\n')
+  const escapeCell = (value) => {
+    const text = String(value ?? '')
+    const safeText = /^[=+\-@]/.test(text) ? `'${text}` : text
+    return `"${safeText.replaceAll('"', '""')}"`
+  }
+  const content = `\uFEFF${rows.map((row) => row.map(escapeCell).join(',')).join('\n')}`
   const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8;' }))
   const link = document.createElement('a')
   link.href = url

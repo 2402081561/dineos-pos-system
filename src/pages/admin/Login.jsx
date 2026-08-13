@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import Button from '../../components/common/Button'
-import { signInAdmin } from '../../services/authService'
+import useAdminAuth from '../../hooks/useAdminAuth'
 
 function Login() {
   const navigate = useNavigate()
@@ -10,6 +10,7 @@ function Login() {
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const { signIn } = useAdminAuth()
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -17,11 +18,14 @@ function Login() {
     try {
       setIsLoading(true)
       setError('')
-      await signInAdmin(email, password)
-      navigate(location.state?.from ?? '/admin/dashboard', { replace: true })
-    } catch (firebaseError) {
-      console.error('[Admin Login] Firebase sign-in failed:', firebaseError)
-      setError('Unable to sign in. Please check your email and password.')
+      const destinationByRole = { admin: '/admin/dashboard', cashier: '/cashier', kitchen: '/kitchen', staff: '/staff' }
+      const requested = location.state?.from
+      const role = (await signIn(email, password)).role
+      const allowedRequested = role === 'admin' ? requested?.startsWith('/admin') : requested?.startsWith(`/${role}`)
+      navigate(allowedRequested ? requested : destinationByRole[role] ?? '/', { replace: true })
+    } catch (signInError) {
+      console.error('[Admin Login] Supabase sign-in failed:', signInError)
+      setError(signInError instanceof Error ? signInError.message : 'Unable to sign in. Please check your email and password.')
     } finally {
       setIsLoading(false)
     }

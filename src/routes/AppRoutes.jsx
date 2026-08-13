@@ -3,6 +3,7 @@ import AdminLayout from '../layouts/AdminLayout'
 import CashierLayout from '../layouts/CashierLayout'
 import ProtectedAdminRoute from '../components/admin/ProtectedAdminRoute'
 import ProtectedCashierRoute from '../components/cashier/ProtectedCashierRoute'
+import ProtectedRoleRoute from '../components/auth/ProtectedRoleRoute'
 import CustomerLayout from '../layouts/CustomerLayout'
 import CustomerSessionRoute from '../components/customer/CustomerSessionRoute'
 import KitchenLayout from '../layouts/KitchenLayout'
@@ -14,15 +15,21 @@ import MenuManagement from '../pages/admin/MenuManagement'
 import OrderManagement from '../pages/admin/OrderManagement'
 import Reports from '../pages/admin/Reports'
 import TableManagement from '../pages/admin/TableManagement'
+import AuditLog from '../pages/admin/AuditLog'
+import Members from '../pages/admin/Members'
+import Rewards from '../pages/admin/Rewards'
 import Bill from '../pages/customer/Bill'
 import Cart from '../pages/customer/Cart'
 import FoodDetails from '../pages/customer/FoodDetails'
 import JoinSession from '../pages/customer/JoinSession'
 import Landing from '../pages/customer/Landing'
 import Menu from '../pages/customer/Menu'
+import OrderHistory from '../pages/customer/OrderHistory'
 import ServiceRequests from '../pages/customer/ServiceRequests'
 import Tracking from '../pages/customer/Tracking'
 import TableSummary from '../pages/customer/TableSummary'
+import CustomerRewards from '../pages/customer/Rewards'
+import MemberProfile from '../pages/customer/MemberProfile'
 import KitchenDashboard from '../pages/kitchen/Dashboard'
 import StaffDashboard from '../pages/staff/Dashboard'
 import Requests from '../pages/staff/Requests'
@@ -45,18 +52,21 @@ function AppRoutes() {
           <Route path="menu/:itemId" element={<FoodDetails />} />
           <Route path="cart" element={<Cart />} />
           <Route path="service-requests" element={<ServiceRequests />} />
+          <Route path="orders" element={<OrderHistory />} />
+          <Route path="rewards" element={<CustomerRewards />} />
+          <Route path="member" element={<MemberProfile />} />
           <Route path="table-summary" element={<TableSummary />} />
           <Route path="bill" element={<Bill />} />
         </Route>
       </Route>
 
-      <Route path="staff" element={<StaffLayout />}>
+      <Route path="staff" element={<ProtectedRoleRoute roles={['admin', 'staff']}><StaffLayout /></ProtectedRoleRoute>}>
         <Route index element={<StaffDashboard />} />
         <Route path="requests" element={<Requests />} />
         <Route path="tables" element={<Tables />} />
       </Route>
 
-      <Route path="kitchen" element={<KitchenLayout />}>
+      <Route path="kitchen" element={<ProtectedRoleRoute roles={['admin', 'kitchen']}><KitchenLayout /></ProtectedRoleRoute>}>
         <Route index element={<KitchenDashboard />} />
       </Route>
 
@@ -76,6 +86,9 @@ function AppRoutes() {
         <Route path="tables" element={<TableManagement />} />
         <Route path="orders" element={<OrderManagement />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="audit-log" element={<AuditLog />} />
+        <Route path="members" element={<Members />} />
+        <Route path="rewards" element={<Rewards />} />
       </Route>
 
       <Route path="*" element={<Navigate replace to="/" />} />

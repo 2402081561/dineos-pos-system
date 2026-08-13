@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import useCustomerSession from './useCustomerSession'
-import { subscribeToTableOrders } from '../services/tableSummaryService'
+import { getCustomerOrders, getCustomerTableSummary } from '../services/customerApi'
 
 function getParticipantStatus(orders) {
   if (orders.length === 0) return 'No orders yet'
@@ -12,57 +12,59 @@ function sumOrderField(orders, field) {
 }
 
 function useTableSummary() {
-  const { session, sessionError, tableSession } = useCustomerSession()
+  const { session, sessionError } = useCustomerSession()
   const [orders, setOrders] = useState([])
+  const [summaryParticipants, setSummaryParticipants] = useState([])
+  const [paymentStatus, setPaymentStatus] = useState('no_orders')
   const [isLoading, setIsLoading] = useState(Boolean(session?.tableNumber))
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!session?.tableNumber) {
+    if (!session?.sessionId) {
       setOrders([])
       setIsLoading(false)
       return () => {}
     }
 
-    setIsLoading(true)
-    return subscribeToTableOrders(
-      session.tableNumber,
-      (tableOrders) => {
-        setOrders(tableOrders)
+    let active = true
+    const load = async () => {
+      try {
+        const [summary, ownOrders] = await Promise.all([getCustomerTableSummary(session.sessionId), getCustomerOrders(session.sessionId)])
+        if (!active) return
+        setSummaryParticipants(summary.participants.map((participant) => ({ sessionId: participant.isCurrentCustomer ? session.sessionId : participant.id, customerNickname: participant.customerNickname, ...participant })))
+        setOrders(ownOrders.filter((order) => order.paymentStatus !== 'paid' && order.status !== 'cancelled'))
+        setPaymentStatus(summary.paymentStatus ?? 'no_orders')
         setError('')
-        setIsLoading(false)
-      },
-      (firebaseError) => {
-        console.error('[Table Summary] Failed to load table orders:', firebaseError)
-        setError('We could not load your table summary right now. Please try again shortly.')
-        setIsLoading(false)
-      },
-    )
-  }, [session?.tableNumber])
+      } catch { if (active) setError('We could not load your table summary right now. Please try again shortly.') } finally { if (active) setIsLoading(false) }
+    }
+    void load()
+    const timer = window.setInterval(() => { void load() }, 10000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [session?.sessionId])
 
   const participants = useMemo(() => {
-    const tableParticipants = Array.isArray(tableSession?.participants) ? tableSession.participants : []
+    const tableParticipants = summaryParticipants
     return tableParticipants.map((participant) => {
-      const participantOrders = orders.filter((order) => order.sessionId === participant.sessionId)
+      const participantOrders = participant.isCurrentCustomer ? orders : []
       return {
         ...participant,
         orders: participantOrders,
-        status: getParticipantStatus(participantOrders),
-        subtotal: sumOrderField(participantOrders, 'subtotal'),
-        serviceCharge: sumOrderField(participantOrders, 'serviceCharge'),
-        sst: sumOrderField(participantOrders, 'sst'),
-        grandTotal: sumOrderField(participantOrders, 'grandTotal'),
-        paymentStatus: 'pending',
+        status: participant.isCurrentCustomer ? getParticipantStatus(participantOrders) : participant.status,
+        subtotal: Number(participant.subtotal ?? sumOrderField(participantOrders, 'subtotal')),
+        serviceCharge: Number(participant.serviceCharge ?? sumOrderField(participantOrders, 'serviceCharge')),
+        sst: Number(participant.sst ?? sumOrderField(participantOrders, 'sst')),
+        grandTotal: Number(participant.grandTotal ?? sumOrderField(participantOrders, 'grandTotal')),
+        paymentStatus: participant.paymentStatus ?? 'pending',
       }
     })
-  }, [orders, tableSession?.participants])
+  }, [orders, summaryParticipants])
 
   const grandTotal = useMemo(
     () => participants.reduce((total, participant) => total + participant.grandTotal, 0),
     [participants],
   )
 
-  return { participants, grandTotal, tableNumber: session?.tableNumber, currentSessionId: session?.sessionId, hasSession: Boolean(session), hasTableSession: tableSession?.status === 'active', isLoading, error: error || sessionError }
+  return { participants, grandTotal, paymentStatus, tableNumber: session?.tableNumber, currentSessionId: session?.sessionId, hasSession: Boolean(session), hasTableSession: Boolean(session), isLoading, error: error || sessionError }
 }
 
 export default useTableSummary

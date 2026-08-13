@@ -4,12 +4,13 @@ export function getReceiptDetails(receipt) {
   const orders = receipt?.orders ?? []
   const items = orders.flatMap((order) => order.items ?? [])
   return {
-    cashier: receipt?.cashierId ? `Cashier ${String(receipt.cashierId).slice(0, 8).toUpperCase()}` : '—',
+    cashier: receipt?.cashierName || (receipt?.cashierId ? `Cashier ${String(receipt.cashierId).slice(0, 8).toUpperCase()}` : '—'),
     customers: [...new Set(orders.map((order) => order.customerNickname || 'Guest'))],
     items,
     serviceCharge: orders.reduce((sum, order) => sum + (Number(order.serviceCharge) || 0), 0),
     sst: orders.reduce((sum, order) => sum + (Number(order.sst) || 0), 0),
     subtotal: orders.reduce((sum, order) => sum + (Number(order.subtotal) || 0), 0),
+    discount: orders.reduce((sum, order) => sum + Math.max(0, Number(order.discountAmount) || 0), 0),
   }
 }
 
@@ -19,7 +20,7 @@ function pdfText(value) {
 
 export function downloadReceiptPdf(receipt) {
   const details = getReceiptDetails(receipt)
-  const paidDate = receipt.paidAt?.toDate?.() ?? new Date()
+  const paidDate = receipt.paidAt?.toDate?.() ?? new Date(receipt.paidAt)
   const lines = [
     'DineOS Restaurant',
     'Receipt',
@@ -33,6 +34,7 @@ export function downloadReceiptPdf(receipt) {
     ...details.items.map((item) => `${item.quantity}x ${item.name}  ${formatCurrency((Number(item.price) || 0) * (Number(item.quantity) || 0))}`),
     '----------------------------------------',
     `Subtotal: ${formatCurrency(details.subtotal)}`,
+    ...(details.discount > 0 ? [`Discount: -${formatCurrency(details.discount)}`] : []),
     `Service charge: ${formatCurrency(details.serviceCharge)}`,
     `SST: ${formatCurrency(details.sst)}`,
     `Grand total: ${formatCurrency(receipt.grandTotal)}`,

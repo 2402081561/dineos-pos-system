@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Button from '../../components/common/Button'
 import QuantitySelector from '../../components/customer/QuantitySelector'
 import SectionHeading from '../../components/common/SectionHeading'
@@ -7,38 +7,69 @@ import StatePanel from '../../components/common/StatePanel'
 import useCart from '../../hooks/useCart'
 import useCustomerSession from '../../hooks/useCustomerSession'
 import useToast from '../../hooks/useToast'
-import { createOrder } from '../../services/orderService'
+import { createOrder, getCartValidationIssues } from '../../services/orderService'
+import { getPublicMenu } from '../../services/customerApi'
 import { formatCurrency } from '../../utils/currency'
 import { getImageSource, useImageFallback } from '../../utils/image'
 
 function Cart() {
   const { cartItems, removeFromCart, updateQuantity, clearCart } = useCart()
-  const { session } = useCustomerSession()
+  const { session, updateSessionNickname } = useCustomerSession()
   const { showToast } = useToast()
   const navigate = useNavigate()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
+  const [menuItems, setMenuItems] = useState([])
+  const [isMenuLoading, setIsMenuLoading] = useState(true)
+  const [menuError, setMenuError] = useState('')
+  const [customerNickname, setCustomerNickname] = useState(() => session?.customerNickname === 'Guest' ? '' : session?.customerNickname ?? '')
   const isSubmittingRef = useRef(false)
-  const subtotal = cartItems.reduce((total, item) => total + item.unitPrice * item.quantity, 0)
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      try { const items = await getPublicMenu(); if (active) { setMenuItems(items); setMenuError('') } } catch { if (active) setMenuError('We could not verify current menu availability. Please try again shortly.') } finally { if (active) setIsMenuLoading(false) }
+    }
+    void load()
+    const timer = window.setInterval(() => { void load() }, 30000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [])
+
+  const cartIssues = useMemo(() => getCartValidationIssues(cartItems, menuItems), [cartItems, menuItems])
+  const currentMenuById = useMemo(() => new Map(menuItems.map((menuItem) => [menuItem.id, menuItem])), [menuItems])
+  const displayCartItems = useMemo(() => cartItems.map((item) => {
+    const currentMenuItem = currentMenuById.get(item.menuItemId)
+    const currentPrice = Number(currentMenuItem?.price)
+    const displayPrice = Number.isFinite(currentPrice) && currentPrice >= 0 ? currentPrice : 0
+    const displayQuantity = Number.isInteger(Number(item.quantity)) && Number(item.quantity) > 0 ? Number(item.quantity) : 0
+    return { ...item, displayPrice, displayQuantity, issue: cartIssues.find((issue) => issue.cartItemId === item.cartItemId)?.message }
+  }), [cartIssues, cartItems, currentMenuById])
+  const subtotal = displayCartItems.reduce((total, item) => total + item.displayPrice * item.displayQuantity, 0)
   const serviceCharge = subtotal * 0.1
   const sst = subtotal * 0.06
   const grandTotal = subtotal + serviceCharge + sst
   const tableLabel = session ? `Table ${session.tableNumber}` : 'No table joined'
+  const isCheckoutBlocked = isMenuLoading || Boolean(menuError) || cartIssues.length > 0
 
   async function handlePlaceOrder() {
     if (isSubmittingRef.current || cartItems.length === 0 || !session) return
+    if (isCheckoutBlocked) {
+      setSubmitError(cartIssues[0]?.message ?? menuError ?? 'Please wait while we check current menu availability.')
+      return
+    }
     try {
       isSubmittingRef.current = true
       setIsSubmitting(true)
       setSubmitError('')
-      const orderReference = await createOrder({ cartItems, session, subtotal, serviceCharge, sst, grandTotal })
+      const orderSession = customerNickname.trim() && !session.isSharedTable ? await updateSessionNickname(customerNickname) : session
+      const orderReference = await createOrder({ cartItems, session: orderSession })
       clearCart()
       showToast('Your order has been received.')
       navigate('/tracking', { state: { orderId: orderReference.id } })
     } catch (firebaseError) {
       console.error('[Cart] Failed to place order:', firebaseError)
-      setSubmitError('We could not place your order. Please try again.')
-      showToast('Your order could not be placed. Please try again.', 'error')
+      const message = firebaseError instanceof Error ? firebaseError.message : 'We could not place your order. Please try again.'
+      setSubmitError(message)
+      showToast(message, 'error')
     } finally {
       isSubmittingRef.current = false
       setIsSubmitting(false)
@@ -47,7 +78,7 @@ function Cart() {
 
   if (cartItems.length === 0) return <div className="mx-auto max-w-4xl space-y-6"><SectionHeading description="Review your items before sending them to the kitchen." eyebrow={tableLabel} title="Your order" /><div className="space-y-5"><StatePanel description="Discover something delicious and add it to your order." title="Your cart is empty" /><div className="text-center"><Link to="/menu"><Button>Browse menu</Button></Link></div></div></div>
 
-  return <div className="mx-auto max-w-5xl space-y-7"><SectionHeading action={<button className="rounded-lg px-2 py-1 text-sm font-semibold text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:opacity-50" disabled={isSubmitting} onClick={clearCart} type="button">Clear cart</button>} description={`Review ${session?.customerNickname ?? 'your'}&apos;s items before sending them to the kitchen.`} eyebrow={tableLabel} title="Your order" /><div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]"><section className="overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-[0_12px_35px_rgb(15,23,42,0.06)]"><div className="border-b border-slate-100 px-5 py-4"><p className="font-bold text-slate-900">Your items</p><p className="mt-1 text-sm text-slate-500">{cartItems.length} item{cartItems.length > 1 ? 's' : ''} ready to order</p></div><div className="divide-y divide-slate-100">{cartItems.map((item) => <article className="flex gap-4 p-4 sm:p-5" key={item.cartItemId}><img alt={item.name || 'Cart item'} className="h-24 w-24 shrink-0 rounded-2xl object-cover shadow-sm" decoding="async" loading="lazy" onError={useImageFallback} src={getImageSource(item.imageUrl)} /><div className="min-w-0 flex-1"><div className="flex justify-between gap-3"><div className="min-w-0"><h2 className="truncate font-bold text-slate-900">{item.name}</h2><p className="mt-1 text-xs font-semibold text-slate-500">{formatCurrency(item.unitPrice)} each</p>{item.specialInstructions && <p className="mt-2 rounded-lg bg-slate-50 px-2 py-1 text-xs text-slate-500">Note: {item.specialInstructions}</p>}</div><div className="text-right"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Subtotal</p><p className="mt-1 whitespace-nowrap font-bold text-orange-600">{formatCurrency(item.unitPrice * item.quantity)}</p></div></div><div className="mt-4 flex items-center justify-between"><button aria-label={`Remove ${item.name} from cart`} className="rounded-lg px-2 py-1 text-xs font-bold text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:opacity-50" disabled={isSubmitting} onClick={() => removeFromCart(item.cartItemId)} type="button">Remove</button><QuantitySelector disabled={isSubmitting} onDecrease={() => updateQuantity(item.cartItemId, Math.max(1, item.quantity - 1))} onIncrease={() => updateQuantity(item.cartItemId, item.quantity + 1)} quantity={item.quantity} /></div></div></article>)}</div></section><aside className="sticky top-24 rounded-3xl border border-orange-100 bg-white p-5 shadow-[0_16px_38px_rgb(15,23,42,0.08)] sm:p-6"><div className="flex items-center justify-between"><h2 className="text-xl font-bold text-slate-900">Order summary</h2><span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700">{tableLabel}</span></div><div className="mt-6 space-y-4 border-b border-slate-100 pb-5 text-sm"><div className="flex justify-between text-slate-600"><span>Subtotal</span><span className="font-semibold text-slate-800">{formatCurrency(subtotal)}</span></div><div className="flex justify-between text-slate-600"><span>Service charge <span className="text-xs">(10%)</span></span><span className="font-semibold text-slate-800">{formatCurrency(serviceCharge)}</span></div><div className="flex justify-between text-slate-600"><span>SST <span className="text-xs">(6%)</span></span><span className="font-semibold text-slate-800">{formatCurrency(sst)}</span></div></div><div className="mt-5 flex items-end justify-between"><span className="text-base font-bold">Grand total</span><span className="text-2xl font-extrabold tracking-tight text-orange-600">{formatCurrency(grandTotal)}</span></div>{submitError && <p className="mt-4 rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-medium text-red-700">{submitError}</p>}<Button className="mt-6 w-full py-3.5" disabled={isSubmitting || !session} onClick={handlePlaceOrder}>{isSubmitting ? 'Placing order...' : 'Place order'}</Button><p className="mt-3 text-center text-xs leading-5 text-slate-400">{isSubmitting ? 'Please wait while we send your order.' : 'Your order will be sent directly to the kitchen.'}</p></aside></div></div>
+  return <div className="mx-auto max-w-5xl space-y-7"><SectionHeading action={<button className="rounded-lg px-2 py-1 text-sm font-semibold text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:opacity-50" disabled={isSubmitting} onClick={clearCart} type="button">Clear cart</button>} description="Review your items before sending them to the kitchen." eyebrow={tableLabel} title="Your order" />{cartIssues.length > 0 && <section aria-live="polite" className="rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-800"><p className="font-bold">Some items need attention before checkout.</p><ul className="mt-2 list-disc space-y-1 pl-5">{cartIssues.map((issue) => <li key={issue.cartItemId}>{issue.message}</li>)}</ul></section>}{menuError && <p aria-live="polite" className="rounded-2xl border border-red-100 bg-red-50 p-4 text-sm font-medium text-red-700">{menuError}</p>}<div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]"><section className="overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-[0_12px_35px_rgb(15,23,42,0.06)]"><div className="border-b border-slate-100 px-5 py-4"><p className="font-bold text-slate-900">Your items</p><p className="mt-1 text-sm text-slate-500">{displayCartItems.length} item{displayCartItems.length > 1 ? 's' : ''} ready to order</p></div><div className="divide-y divide-slate-100">{displayCartItems.map((item) => <article className="flex gap-4 p-4 sm:p-5" key={item.cartItemId}><img alt={item.name || 'Cart item'} className="h-24 w-24 shrink-0 rounded-2xl object-cover shadow-sm" decoding="async" loading="lazy" onError={useImageFallback} src={getImageSource(item.imageUrl)} /><div className="min-w-0 flex-1"><div className="flex justify-between gap-3"><div className="min-w-0"><h2 className="truncate font-bold text-slate-900">{item.name || 'Menu item'}</h2><p className="mt-1 text-xs font-semibold text-slate-500">{formatCurrency(item.displayPrice)} each</p>{item.issue && <p className="mt-2 rounded-lg bg-red-50 px-2 py-1 text-xs font-semibold text-red-700">{item.issue}</p>}{item.specialInstructions && <p className="mt-2 rounded-lg bg-slate-50 px-2 py-1 text-xs text-slate-500">Note: {item.specialInstructions}</p>}</div><div className="text-right"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Subtotal</p><p className="mt-1 whitespace-nowrap font-bold text-orange-600">{formatCurrency(item.displayPrice * item.displayQuantity)}</p></div></div><div className="mt-4 flex items-center justify-between"><button aria-label={`Remove ${item.name || 'item'} from cart`} className="rounded-lg px-2 py-1 text-xs font-bold text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:opacity-50" disabled={isSubmitting} onClick={() => removeFromCart(item.cartItemId)} type="button">Remove</button><QuantitySelector disabled={isSubmitting || Boolean(item.issue)} onDecrease={() => updateQuantity(item.cartItemId, Math.max(1, item.displayQuantity - 1))} onIncrease={() => updateQuantity(item.cartItemId, item.displayQuantity + 1)} quantity={item.displayQuantity} /></div></div></article>)}</div></section><aside className="sticky top-24 rounded-3xl border border-orange-100 bg-white p-5 shadow-[0_16px_38px_rgb(15,23,42,0.08)] sm:p-6"><div className="flex items-center justify-between"><h2 className="text-xl font-bold text-slate-900">Order summary</h2><span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700">{tableLabel}</span></div><label className="mt-6 block text-sm font-bold text-slate-800" htmlFor="customer-nickname">Name <span className="font-normal text-slate-400">(optional)</span><input className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-orange-400" disabled={isSubmitting} id="customer-nickname" maxLength="20" onChange={(event) => setCustomerNickname(event.target.value)} placeholder="e.g. Jason" value={customerNickname} /></label><p className="mt-1 text-xs leading-5 text-slate-400">Leave blank to order as Guest.</p><div className="mt-6 space-y-4 border-b border-slate-100 pb-5 text-sm"><div className="flex justify-between text-slate-600"><span>Subtotal</span><span className="font-semibold text-slate-800">{formatCurrency(subtotal)}</span></div><div className="flex justify-between text-slate-600"><span>Service charge <span className="text-xs">(10%)</span></span><span className="font-semibold text-slate-800">{formatCurrency(serviceCharge)}</span></div><div className="flex justify-between text-slate-600"><span>SST <span className="text-xs">(6%)</span></span><span className="font-semibold text-slate-800">{formatCurrency(sst)}</span></div></div><div className="mt-5 flex items-end justify-between"><span className="text-base font-bold">Grand total</span><span className="text-2xl font-extrabold tracking-tight text-orange-600">{formatCurrency(grandTotal)}</span></div>{submitError && <p aria-live="polite" className="mt-4 rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-medium text-red-700">{submitError}</p>}<Button className="mt-6 w-full py-3.5" disabled={isSubmitting || !session || isCheckoutBlocked} onClick={handlePlaceOrder}>{isSubmitting ? 'Placing order...' : isMenuLoading ? 'Checking menu...' : 'Place order'}</Button><p className="mt-3 text-center text-xs leading-5 text-slate-400">{isSubmitting ? 'Please wait while we send your order.' : isCheckoutBlocked ? 'Resolve item availability before placing your order.' : 'Your order will be sent directly to the kitchen.'}</p></aside></div></div>
 }
 
 export default Cart

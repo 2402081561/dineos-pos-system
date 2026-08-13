@@ -1,0 +1,21 @@
+{
+  "name": "dineos-api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "check": "node --check src/index.js && node --check scripts/migrate-firestore-snapshot.js && node --check scripts/map-firestore-snapshot.js && node --check scripts/provision-user.js",
+    "db:schema": "node scripts/apply-schema.js",
+    "migrate:firestore-snapshot": "node scripts/migrate-firestore-snapshot.js",
+    "map:firestore-snapshot": "node scripts/map-firestore-snapshot.js",
+    "users:provision": "node scripts/provision-user.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "pg": "^8.16.3"
+  }
+}

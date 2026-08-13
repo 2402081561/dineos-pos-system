@@ -1,169 +1,78 @@
-import { addDoc, collection, doc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, where, writeBatch } from 'firebase/firestore'
-import { db } from './firebase'
+import { cancelCustomerOrder as cancelCustomerOrderRequest, getCustomerOrders, placeCustomerOrder } from './customerApi'
 
-const ordersCollection = collection(db, 'orders')
-export async function createOrder({ cartItems, session, subtotal, serviceCharge, sst, grandTotal }) {
-  const order = {
-    tableId: session.tableNumber,
-    tableNumber: session.tableNumber,
-    sessionId: session.sessionId,
-    customerNickname: session.customerNickname,
-    items: cartItems.map((item) => ({
-      menuItemId: item.menuItemId,
-      name: item.name,
-      price: item.unitPrice,
-      quantity: item.quantity,
-      notes: item.specialInstructions,
-    })),
-    subtotal,
-    serviceCharge,
-    sst,
-    grandTotal,
-    status: 'received',
-    paymentStatus: 'pending',
-    paymentMethod: null,
-    paidAt: null,
-    cashierId: null,
-    receiptNumber: null,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+function finiteNonNegative(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? number : null
+}
+
+function roundMoney(value) {
+  const amount = Number(value)
+  return Number.isFinite(amount) ? Math.round((amount + Number.EPSILON) * 100) / 100 : Number.NaN
+}
+
+export function calculateTableDiscount(subtotal, discount = {}) {
+  const safeSubtotal = finiteNonNegative(subtotal)
+  if (safeSubtotal === null) throw new Error('The table subtotal is invalid.')
+  const type = String(discount?.type ?? 'percentage').toLowerCase()
+  const value = Number(discount?.value ?? 0)
+  if (!Number.isFinite(value) || value < 0) throw new Error('Enter a valid non-negative discount.')
+  if (type === 'percentage') {
+    if (value > 100) throw new Error('Percentage discount cannot exceed 100%.')
+    const amount = roundMoney(safeSubtotal * (value / 100))
+    if (!Number.isFinite(amount)) throw new Error('The discount amount is invalid.')
+    return { type, value, amount }
   }
+  if (type === 'fixed') {
+    if (value > safeSubtotal) throw new Error('Fixed discount cannot exceed the table subtotal.')
+    const amount = roundMoney(value)
+    if (!Number.isFinite(amount)) throw new Error('The discount amount is invalid.')
+    return { type, value: amount, amount }
+  }
+  throw new Error('Select a valid discount type.')
+}
 
-  return addDoc(ordersCollection, order)
+export function isMenuItemOrderable(menuItem) {
+  return Boolean(menuItem?.id) && Boolean(String(menuItem.name ?? '').trim()) && menuItem.isAvailable === true && finiteNonNegative(menuItem.price) !== null
+}
+
+export function getCartValidationIssues(cartItems, menuItems) {
+  const currentMenuById = new Map((Array.isArray(menuItems) ? menuItems : []).map((menuItem) => [menuItem.id, menuItem]))
+  return (Array.isArray(cartItems) ? cartItems : []).flatMap((cartItem) => {
+    const label = String(cartItem?.name ?? 'This item').trim() || 'This item'
+    const quantity = Number(cartItem?.quantity)
+    const currentMenuItem = currentMenuById.get(cartItem?.menuItemId)
+    if (!cartItem?.menuItemId || !currentMenuItem) return [{ cartItemId: cartItem?.cartItemId, message: `${label} is no longer on the menu.` }]
+    if (!Number.isInteger(quantity) || quantity < 1) return [{ cartItemId: cartItem.cartItemId, message: `${label} has an invalid quantity.` }]
+    if (!String(currentMenuItem.name ?? '').trim()) return [{ cartItemId: cartItem.cartItemId, message: `${label} has incomplete menu information.` }]
+    if (currentMenuItem.isAvailable !== true) return [{ cartItemId: cartItem.cartItemId, message: `${currentMenuItem.name} is no longer available.` }]
+    if (finiteNonNegative(currentMenuItem.price) === null) return [{ cartItemId: cartItem.cartItemId, message: `${currentMenuItem.name} has an invalid price and cannot be ordered.` }]
+    return []
+  })
+}
+
+export async function createOrder({ cartItems, session }) {
+  if (!session?.sessionId) throw new Error('Join an active table session before placing an order.')
+  const items = (cartItems ?? []).map((item) => ({ menuItemId: item?.menuItemId, quantity: item?.quantity, notes: item?.specialInstructions }))
+  return placeCustomerOrder(session.sessionId, items)
 }
 
 export function subscribeToCustomerOrders(session, onOrdersUpdate, onError) {
-  if (!session?.sessionId) {
-    onOrdersUpdate([])
-    return () => {}
+  if (!session?.sessionId) { onOrdersUpdate([]); return () => {} }
+  let active = true
+  const load = async () => {
+    try { const orders = await getCustomerOrders(session.sessionId); if (active) onOrdersUpdate(orders) }
+    catch (error) { if (active) onError(error) }
   }
-
-  const latestOrderQuery = query(
-    ordersCollection,
-    where('sessionId', '==', session.sessionId),
-  )
-
-  return onSnapshot(
-    latestOrderQuery,
-    (snapshot) => {
-      const orders = snapshot.docs
-        .map((order) => ({ id: order.id, ...order.data() }))
-        .sort((firstOrder, secondOrder) => (secondOrder.createdAt?.toMillis?.() ?? 0) - (firstOrder.createdAt?.toMillis?.() ?? 0))
-      onOrdersUpdate(orders)
-    },
-    onError,
-  )
+  void load()
+  const timer = window.setInterval(() => { void load() }, 10000)
+  return () => { active = false; window.clearInterval(timer) }
 }
 
 export function subscribeToLatestCustomerOrder(session, onOrderUpdate, onError) {
-  return subscribeToCustomerOrders(
-    session,
-    (orders) => onOrderUpdate(orders[0] ?? null),
-    onError,
-  )
+  return subscribeToCustomerOrders(session, (orders) => onOrderUpdate(orders[0] ?? null), onError)
 }
 
-export function subscribeToActiveKitchenOrders(onOrdersUpdate, onError) {
-  const activeOrdersQuery = query(
-    ordersCollection,
-    where('status', 'in', ['received', 'preparing', 'ready']),
-  )
-
-  return onSnapshot(
-    activeOrdersQuery,
-    (snapshot) => {
-      const orders = snapshot.docs
-        .map((order) => ({ id: order.id, ...order.data() }))
-        .sort((firstOrder, secondOrder) => {
-          const firstTime = firstOrder.createdAt?.toMillis?.() ?? Number.MAX_SAFE_INTEGER
-          const secondTime = secondOrder.createdAt?.toMillis?.() ?? Number.MAX_SAFE_INTEGER
-          return firstTime - secondTime
-        })
-
-      onOrdersUpdate(orders)
-    },
-    onError,
-  )
-}
-
-const nextKitchenStatuses = {
-  received: 'preparing',
-  preparing: 'ready',
-  ready: 'served',
-}
-
-export async function updateOrderStatus(orderId, status, expectedStatus) {
-  const normalizedExpectedStatus = String(expectedStatus ?? '').toLowerCase()
-  const normalizedNextStatus = String(status ?? '').toLowerCase()
-
-  if (nextKitchenStatuses[normalizedExpectedStatus] !== normalizedNextStatus) {
-    throw new Error('This status update is not valid.')
-  }
-
-  await runTransaction(db, async (transaction) => {
-    const orderReference = doc(db, 'orders', orderId)
-    const orderSnapshot = await transaction.get(orderReference)
-    if (!orderSnapshot.exists()) throw new Error('This order is no longer available.')
-
-    const currentStatus = String(orderSnapshot.data().status ?? '').toLowerCase()
-    if (currentStatus !== normalizedExpectedStatus) {
-      throw new Error('This order was updated by another kitchen user.')
-    }
-
-    transaction.update(orderReference, {
-      status: normalizedNextStatus,
-      updatedAt: serverTimestamp(),
-    })
-  })
-}
-
-export function subscribeToPendingPaymentOrders(onOrdersUpdate, onError) {
-  return onSnapshot(
-    query(ordersCollection, where('status', '==', 'served')),
-    (snapshot) => onOrdersUpdate(snapshot.docs
-      .map((order) => ({ id: order.id, ...order.data() }))
-      .filter((order) => String(order.paymentStatus ?? 'pending').toLowerCase() !== 'paid')),
-    onError,
-  )
-}
-
-function receiptDatePrefix(date = new Date()) {
-  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-}
-
-function isPaidToday(order, prefix) {
-  const paidDate = order.paidAt?.toDate?.()
-  return order.paymentStatus === 'paid' && paidDate && receiptDatePrefix(paidDate) === prefix
-}
-
-async function generateReceiptNumber() {
-  const prefix = receiptDatePrefix()
-  const snapshot = await getDocs(query(ordersCollection, where('paymentStatus', '==', 'paid')))
-  const receiptNumbers = new Set(snapshot.docs
-    .map((order) => order.data())
-    .filter((order) => isPaidToday(order, prefix))
-    .map((order) => order.receiptNumber)
-    .filter(Boolean))
-
-  return `R-${prefix}-${String(receiptNumbers.size + 1).padStart(4, '0')}`
-}
-
-export async function completeTablePayment({ cashierId, orders, paymentMethod }) {
-  const unpaidOrders = orders.filter((order) => String(order.paymentStatus ?? 'pending').toLowerCase() !== 'paid')
-  if (unpaidOrders.length === 0) throw new Error('This table does not have any unpaid orders.')
-
-  const receiptNumber = await generateReceiptNumber()
-  const batch = writeBatch(db)
-  unpaidOrders.forEach((order) => {
-    batch.update(doc(db, 'orders', order.id), {
-      paymentStatus: 'paid',
-      paymentMethod,
-      paidAt: serverTimestamp(),
-      cashierId,
-      receiptNumber,
-      updatedAt: serverTimestamp(),
-    })
-  })
-  await batch.commit()
-  return receiptNumber
+export async function cancelCustomerOrder({ orderId, sessionId }) {
+  if (!orderId || !sessionId) throw new Error('This order cannot be cancelled without an active customer session.')
+  return cancelCustomerOrderRequest(sessionId, orderId)
 }

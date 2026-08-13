@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { subscribeToPendingServiceRequests } from '../services/serviceRequestService'
+import { getSupabaseServiceRequests, subscribeToSupabaseServiceRequests } from '../services/adminApiService'
 
 function useServiceRequests() {
   const [requests, setRequests] = useState([])
@@ -7,14 +7,14 @@ function useServiceRequests() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    const unsubscribe = subscribeToPendingServiceRequests(
+    const unsubscribe = subscribeToSupabaseServiceRequests(
       (pendingRequests) => {
         setRequests(pendingRequests)
         setError('')
         setIsLoading(false)
       },
-      (firebaseError) => {
-        console.error('[useServiceRequests] Firestore subscription failed:', firebaseError)
+      (apiError) => {
+        console.error('[useServiceRequests] API subscription failed:', apiError)
         setError('We could not load service requests right now. Please try again shortly.')
         setIsLoading(false)
       },
@@ -23,7 +23,20 @@ function useServiceRequests() {
     return unsubscribe
   }, [])
 
-  return { requests, isLoading, error }
+  async function refresh() {
+    try {
+      const pendingRequests = await getSupabaseServiceRequests()
+      setRequests(pendingRequests)
+      setError('')
+    } catch (apiError) {
+      console.error('[useServiceRequests] API refresh failed:', apiError)
+      setError('We could not refresh service requests right now. Please try again shortly.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  return { requests, isLoading, error, refresh }
 }
 
 export default useServiceRequests

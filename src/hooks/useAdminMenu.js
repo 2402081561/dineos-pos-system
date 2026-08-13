@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { subscribeToCategories } from '../services/categoryService'
-import { subscribeToAllMenuItems } from '../services/menuService'
+import { subscribeToSupabaseAdminMenu } from '../services/adminApiService'
 
 function useAdminMenu() {
   const [menuItems, setMenuItems] = useState([])
@@ -11,25 +10,16 @@ function useAdminMenu() {
   useEffect(() => {
     let isMounted = true
 
-    const unsubscribeCategories = subscribeToCategories(
-      (categoryData) => {
-        if (isMounted) setCategories(categoryData)
-      },
-      (firebaseError) => {
-        console.error('[useAdminMenu] Category query failed:', firebaseError)
-        if (isMounted) setError('We could not load menu data right now. Please try again shortly.')
-      },
-    )
-
-    const unsubscribe = subscribeToAllMenuItems(
-      (items) => {
+    const unsubscribe = subscribeToSupabaseAdminMenu(
+      ({ categories: categoryData, menuItems: items }) => {
         if (isMounted) {
+          setCategories(categoryData.map((category) => ({ ...category, isActive: category.isEnabled })))
           setMenuItems(items)
           setIsLoading(false)
         }
       },
-      (firebaseError) => {
-        console.error('[useAdminMenu] Menu query failed:', firebaseError)
+      (apiError) => {
+        console.error('[useAdminMenu] API query failed:', apiError)
         if (isMounted) {
           setError('We could not load menu data right now. Please try again shortly.')
           setIsLoading(false)
@@ -39,7 +29,6 @@ function useAdminMenu() {
 
     return () => {
       isMounted = false
-      unsubscribeCategories()
       unsubscribe()
     }
   }, [])

@@ -7,13 +7,13 @@ import useReceiptHistory from '../../hooks/useReceiptHistory'
 import { formatCurrency } from '../../utils/currency'
 
 function receiptDate(value) {
-  if (!value?.toDate) return '—'
-  return new Intl.DateTimeFormat('en-MY', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(value.toDate())
+  const date = value?.toDate?.() ?? new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('en-MY', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date)
 }
 
 function dateInputValue(value) {
-  const date = value?.toDate?.()
-  if (!date) return ''
+  const date = value?.toDate?.() ?? new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 

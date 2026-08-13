@@ -10,9 +10,15 @@
     "preview": "vite preview",
     "verify:firebase": "node scripts/verify-firebase.mjs",
     "seed:firestore": "node scripts/seed-firestore.mjs",
-    "fix:menu-data": "node scripts/fix-menu-data.mjs"
+    "fix:menu-data": "node scripts/fix-menu-data.mjs",
+    "server:install": "npm --prefix server install",
+    "server:db:schema": "npm --prefix server run db:schema",
+    "server:migrate:firestore": "npm --prefix server run migrate:firestore-snapshot",
+    "server:map:firestore": "npm --prefix server run map:firestore-snapshot",
+    "server:users:provision": "npm --prefix server run users:provision --"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
     "firebase": "^11.10.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

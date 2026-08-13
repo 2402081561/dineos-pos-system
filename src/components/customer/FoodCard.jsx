@@ -3,17 +3,18 @@ import Button from '../common/Button'
 import useAddToCartFeedback from '../../hooks/useAddToCartFeedback'
 import { formatCurrency } from '../../utils/currency'
 import { getImageSource, useImageFallback } from '../../utils/image'
+import { isMenuItemOrderable } from '../../services/orderService'
 
 function FoodCard({ categoryName = 'Menu item', food, compact = false }) {
   const { addItem, isAdded, isAdding, isBusy } = useAddToCartFeedback()
-  const isUnavailable = !food.isAvailable
+  const isUnavailable = !isMenuItemOrderable(food)
 
   return <article className={`interactive-card group overflow-hidden ${compact ? '' : 'h-full'}`}>
     <Link aria-label={`View ${food.name}`} className="relative block overflow-hidden bg-slate-100" to={`/menu/${food.id}`}>
       <img alt={food.name || 'Menu item'} className={`w-full object-cover transition duration-500 ease-out group-hover:scale-105 ${compact ? 'h-28' : 'aspect-[4/3]'}`} decoding="async" loading="lazy" onError={useImageFallback} src={getImageSource(food.imageUrl)} />
       <div className="absolute inset-x-0 top-0 flex flex-wrap gap-2 p-3">
         {food.isPopular && <span className="rounded-full bg-orange-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm">Popular</span>}
-        {isUnavailable && <span className="rounded-full bg-slate-900/85 px-2.5 py-1 text-[11px] font-bold text-white">Unavailable</span>}
+        {isUnavailable && <span className="rounded-full bg-slate-900/85 px-2.5 py-1 text-[11px] font-bold text-white">Sold out</span>}
       </div>
     </Link>
     <div className="flex h-full flex-col p-4 sm:p-5">

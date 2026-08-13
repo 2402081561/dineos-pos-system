@@ -1,15 +1,7 @@
-import { useEffect, useState } from 'react'
-import { subscribeToActiveKitchenOrders } from '../services/orderService'
-
 function useKitchenQueue() {
-  const [activeOrders, setActiveOrders] = useState([])
-
-  useEffect(() => subscribeToActiveKitchenOrders(
-    setActiveOrders,
-    (error) => console.error('[Customer Tracking] Failed to load kitchen queue:', error),
-  ), [])
-
-  return activeOrders
+  // Kitchen queue details are operational data and must not be exposed to a
+  // customer session. Tracking estimates are based on the customer's order.
+  return []
 }
 
 export default useKitchenQueue

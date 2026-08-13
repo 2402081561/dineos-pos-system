@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { subscribeToActiveCategories } from '../services/categoryService'
-import { subscribeToAllMenuItems } from '../services/menuService'
+import { getPublicMenu } from '../services/customerApi'
 
 function useMenu() {
   const [categories, setCategories] = useState([])
@@ -9,40 +8,19 @@ function useMenu() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    let isMounted = true
-
-    setIsLoading(true)
-    setError('')
-
-    const unsubscribeMenuItems = subscribeToAllMenuItems(
-      (menuItemData) => {
-        if (!isMounted) return
-        setMenuItems(menuItemData)
-        setIsLoading(false)
-      },
-      (firebaseError) => {
-        console.error('[useMenu] Failed to subscribe to menu items:', firebaseError)
-        if (!isMounted) return
-        setError('We could not load the menu right now. Please try again shortly.')
-        setIsLoading(false)
-      },
-    )
-
-    const unsubscribe = subscribeToActiveCategories(
-      (categoryData) => {
-        if (isMounted) setCategories(categoryData)
-      },
-      (firebaseError) => {
-        console.error('[useMenu] Failed to subscribe to categories:', firebaseError)
-        if (isMounted) setError('We could not load the menu right now. Please try again shortly.')
-      },
-    )
-
-    return () => {
-      isMounted = false
-      unsubscribeMenuItems()
-      unsubscribe()
+    let active = true
+    const load = async () => {
+      try {
+        const items = await getPublicMenu()
+        if (!active) return
+        setMenuItems(items)
+        setCategories([...new Map(items.filter((item) => item.categoryId && item.categoryName).map((item) => [item.categoryId, { id: item.categoryId, name: item.categoryName, sortOrder: item.categorySortOrder }])).values()].sort((first, second) => Number(first.sortOrder) - Number(second.sortOrder)))
+        setError('')
+      } catch (loadError) { if (active) setError(loadError.message || 'We could not load the menu right now.') } finally { if (active) setIsLoading(false) }
     }
+    void load()
+    const timer = window.setInterval(() => { void load() }, 30000)
+    return () => { active = false; window.clearInterval(timer) }
   }, [])
 
   const popularItems = useMemo(

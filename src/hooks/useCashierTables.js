@@ -1,23 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
-import { subscribeToPendingPaymentOrders } from '../services/orderService'
+import { subscribeToSupabasePendingPayments } from '../services/adminApiService'
 
 function timeValue(timestamp) {
-  return timestamp?.toMillis?.() ?? 0
+  const value = timestamp?.toMillis?.() ?? new Date(timestamp).getTime()
+  return Number.isFinite(value) ? value : 0
 }
 
 function useCashierTables() {
   const [orders, setOrders] = useState([])
+  const [clearableTables, setClearableTables] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => subscribeToPendingPaymentOrders(
-    (pendingOrders) => {
+  useEffect(() => subscribeToSupabasePendingPayments(
+    ({ orders: pendingOrders, clearableTables: readyTables = [] }) => {
       setOrders(pendingOrders)
+      setClearableTables(readyTables)
       setError('')
       setIsLoading(false)
     },
-    (firebaseError) => {
-      console.error('[Cashier] Failed to load pending payment orders:', firebaseError)
+    (apiError) => {
+      console.error('[Cashier] Failed to load pending payment orders:', apiError)
       setError('We could not load tables awaiting payment. Please try again shortly.')
       setIsLoading(false)
     },
@@ -42,7 +45,7 @@ function useCashierTables() {
       .sort((first, second) => timeValue(second.lastUpdatedAt) - timeValue(first.lastUpdatedAt))
   }, [orders])
 
-  return { error, isLoading, orders, tables }
+  return { clearableTables, error, isLoading, orders, tables }
 }
 
 export default useCashierTables

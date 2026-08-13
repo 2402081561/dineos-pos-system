@@ -5,14 +5,7 @@ import SectionHeading from '../../components/common/SectionHeading'
 import StatePanel from '../../components/common/StatePanel'
 import CategoryFormModal from '../../components/admin/CategoryFormModal'
 import useToast from '../../hooks/useToast'
-import {
-  createCategory,
-  deleteCategory,
-  isCategoryUsed,
-  subscribeToCategories,
-  updateCategory,
-  updateCategoryActiveStatus,
-} from '../../services/categoryService'
+import { createSupabaseCategory as createCategory, deleteSupabaseCategory as deleteCategory, subscribeToSupabaseCategories as subscribeToCategories, updateSupabaseCategory as updateCategory, updateSupabaseCategoryActive as updateCategoryActiveStatus } from '../../services/adminApiService'
 
 function CategoryManagement() {
   const { showToast } = useToast()
@@ -94,11 +87,6 @@ function CategoryManagement() {
     try {
       setIsSubmitting(true)
       setActionError('')
-      if (await isCategoryUsed(deletingCategory.id)) {
-        setDeletingCategory(null)
-        setActionError('This category is currently used by menu items.')
-        return
-      }
       await deleteCategory(deletingCategory.id)
       showToast('Category deleted.')
       setDeletingCategory(null)
@@ -114,7 +102,7 @@ function CategoryManagement() {
     try {
       setUpdatingCategoryId(category.id)
       setActionError('')
-      await updateCategoryActiveStatus(category.id, category.isActive === false)
+      await updateCategoryActiveStatus(category, category.isActive === false)
     } catch (firebaseError) {
       console.error('[Category Management] Failed to update category status:', firebaseError)
       setActionError('We could not update this category. Please try again.')

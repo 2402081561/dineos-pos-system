@@ -7,6 +7,9 @@ const navigation = [
   { label: 'Tables', to: '/admin/tables' },
   { label: 'Orders', to: '/admin/orders' },
   { label: 'Reports', to: '/admin/reports' },
+  { label: 'Members', to: '/admin/members' },
+  { label: 'Rewards', to: '/admin/rewards' },
+  { label: 'Audit log', to: '/admin/audit-log' },
 ]
 
 function AdminLayout() {

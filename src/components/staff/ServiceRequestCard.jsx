@@ -6,7 +6,8 @@ const requestIcons = { callWaiter: '♧', requestBill: '▣', water: '◒', extr
 
 function ServiceRequestCard({ request, isUpdating, onComplete }) {
   const tableNumber = String(request.tableNumber ?? request.tableId ?? '—').replace('temporary-table-', '')
-  const requestTime = request.createdAt?.toDate ? request.createdAt.toDate().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Just now'
+  const requestDate = request.createdAt?.toDate?.() ?? new Date(request.createdAt)
+  const requestTime = Number.isNaN(requestDate.getTime()) ? 'Just now' : requestDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
   const requestType = request.requestType === 'requestBill' && request.billMode
     ? `${request.billMode === 'table' ? 'Table' : 'Split'} bill request`
     : requestLabels[request.requestType] ?? String(request.requestType ?? 'Service request')

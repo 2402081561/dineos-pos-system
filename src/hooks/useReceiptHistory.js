@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react'
-import { subscribeToReceiptHistory } from '../services/receiptService'
+import { subscribeToSupabaseReceipts } from '../services/adminApiService'
 
 function useReceiptHistory() {
   const [receipts, setReceipts] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => subscribeToReceiptHistory((nextReceipts) => {
+  useEffect(() => subscribeToSupabaseReceipts((nextReceipts) => {
     setReceipts(nextReceipts)
     setError('')
     setIsLoading(false)
-  }, (firebaseError) => {
-    console.error('[Receipt History] Failed to load receipts:', firebaseError)
+  }, (apiError) => {
+    console.error('[Receipt History] Failed to load receipts:', apiError)
     setError('We could not load receipt history. Please try again shortly.')
     setIsLoading(false)
   }), [])

@@ -1,5 +1,6 @@
-import { addDoc, collection, getDocs, onSnapshot, orderBy, query, serverTimestamp } from 'firebase/firestore'
+import { collection, doc, getDocs, onSnapshot, orderBy, query, runTransaction, serverTimestamp, where } from 'firebase/firestore'
 import { db } from './firebase'
+import { logAuditEvent } from './auditLogService'
 
 const ordersCollection = collection(db, 'orders')
 const closingsCollection = collection(db, 'shiftClosings')
@@ -36,28 +37,45 @@ export function subscribeToShiftClosing(closingId, onUpdate, onError) {
   }, onError)
 }
 
-export async function createShiftClosing({ cashierId, cashierName, summary, shiftStartTime }) {
+const methodKeys = { Cash: 'cash', 'Credit/Debit Card': 'card', "Touch 'n Go": 'touchNGo', GrabPay: 'grabPay', FPX: 'fpx', Other: 'other' }
+
+function summarizePaidOrders(orders) {
+  const breakdown = { cash: 0, card: 0, touchNGo: 0, grabPay: 0, fpx: 0, other: 0 }
+  const bills = orders.map((order) => Math.max(0, Number(order.grandTotal) || 0))
+  orders.forEach((order, index) => { breakdown[methodKeys[order.paymentMethod] ?? 'other'] += bills[index] })
+  const grandTotal = Object.values(breakdown).reduce((sum, amount) => sum + amount, 0)
+  return { ...breakdown, grandTotal, transactionCount: orders.length, averageBill: orders.length ? grandTotal / orders.length : 0, highestBill: bills.length ? Math.max(...bills) : 0, lowestBill: bills.length ? Math.min(...bills) : 0 }
+}
+
+function legacyClosingSequence(snapshot, prefix) {
+  const expression = new RegExp(`^CL-${prefix}-(\\d+)$`)
+  return snapshot.docs.reduce((highest, document) => {
+    const match = String(document.data().closingId ?? '').match(expression)
+    return match ? Math.max(highest, Number(match[1]) || 0) : highest
+  }, 0)
+}
+
+export async function createShiftClosing({ cashierId, cashierName, shiftStartTime }) {
+  if (!cashierId) throw new Error('A cashier is required to close a shift.')
   const prefix = datePrefix()
-  const existingClosings = await getDocs(closingsCollection)
-  const todaysClosings = existingClosings.docs.filter((document) => document.data().closingId?.startsWith(`CL-${prefix}-`)).length
-  const closingId = `CL-${prefix}-${String(todaysClosings + 1).padStart(4, '0')}`
-  await addDoc(closingsCollection, {
-    closingId,
-    cashierId,
-    cashierName,
-    shiftStartTime,
-    closedAt: serverTimestamp(),
-    cash: summary.cash,
-    card: summary.card,
-    touchNGo: summary.touchNGo,
-    grabPay: summary.grabPay,
-    fpx: summary.fpx,
-    other: summary.other,
-    grandTotal: summary.grandTotal,
-    transactionCount: summary.transactionCount,
-    averageBill: summary.averageBill,
-    highestBill: summary.highestBill,
-    lowestBill: summary.lowestBill,
+  const closingReference = doc(db, 'shiftClosings', `daily-${prefix}`)
+  const counterReference = doc(db, 'counters', `closing-${prefix}`)
+  const [existingClosings, paidSnapshot] = await Promise.all([
+    getDocs(closingsCollection),
+    getDocs(query(ordersCollection, where('paymentStatus', '==', 'paid'))),
+  ])
+  if (existingClosings.docs.some((document) => document.data().shiftDate === prefix || document.data().closingId?.startsWith(`CL-${prefix}-`))) throw new Error('Today’s shift has already been closed.')
+  const summary = summarizePaidOrders(paidSnapshot.docs.map((document) => document.data()).filter((order) => sameLocalDay(order.paidAt)))
+  const legacySequence = legacyClosingSequence(existingClosings, prefix)
+  const result = await runTransaction(db, async (transaction) => {
+    if ((await transaction.get(closingReference)).exists()) throw new Error('This cashier shift has already been closed today.')
+    const counterSnapshot = await transaction.get(counterReference)
+    const sequence = (counterSnapshot.exists() ? Number(counterSnapshot.data().lastNumber) || 0 : legacySequence) + 1
+    const closingId = `CL-${prefix}-${String(sequence).padStart(4, '0')}`
+    transaction.set(counterReference, { lastNumber: sequence, updatedAt: serverTimestamp() }, { merge: true })
+    transaction.set(closingReference, { closingId, cashierId, cashierName: cashierName || 'Cashier', shiftStartTime, shiftDate: prefix, closedAt: serverTimestamp(), ...summary })
+    return { closingId, summary }
   })
-  return closingId
+  void logAuditEvent({ action: 'CLOSE_SHIFT', category: 'CASHIER', targetType: 'shiftClosing', targetId: result.closingId, details: { grandTotal: result.summary.grandTotal, transactionCount: result.summary.transactionCount } })
+  return result
 }

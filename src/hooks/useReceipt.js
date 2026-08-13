@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { subscribeToReceipt } from '../services/receiptService'
+import { subscribeToSupabaseReceipt } from '../services/adminApiService'
 
 function useReceipt(receiptNumber) {
   const [receipt, setReceipt] = useState(null)
@@ -13,12 +13,12 @@ function useReceipt(receiptNumber) {
       return () => {}
     }
     setIsLoading(true)
-    return subscribeToReceipt(receiptNumber, (nextReceipt) => {
+    return subscribeToSupabaseReceipt(receiptNumber, (nextReceipt) => {
       setReceipt(nextReceipt)
       setError('')
       setIsLoading(false)
-    }, (firebaseError) => {
-      console.error('[Receipt] Failed to load receipt:', firebaseError)
+    }, (apiError) => {
+      console.error('[Receipt] Failed to load receipt:', apiError)
       setError('We could not load this receipt. Please try again shortly.')
       setIsLoading(false)
     })

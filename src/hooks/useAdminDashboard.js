@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getAdminDashboardData } from '../services/adminDashboardService'
+import { subscribeToSupabaseAdminDashboard } from '../services/adminApiService'
 
 function useAdminDashboard() {
   const [dashboardData, setDashboardData] = useState(null)
@@ -9,25 +9,23 @@ function useAdminDashboard() {
   useEffect(() => {
     let isMounted = true
 
-    async function loadDashboard() {
-      try {
-        setIsLoading(true)
+    const unsubscribe = subscribeToSupabaseAdminDashboard((data) => {
+      if (isMounted) {
+        setDashboardData(data)
         setError('')
-        const data = await getAdminDashboardData()
-
-        if (isMounted) setDashboardData(data)
-      } catch (firebaseError) {
-        console.error('[useAdminDashboard] Firestore dashboard query failed:', firebaseError)
-        if (isMounted) setError('We could not load the dashboard right now. Please try again shortly.')
-      } finally {
-        if (isMounted) setIsLoading(false)
+        setIsLoading(false)
       }
-    }
-
-    loadDashboard()
+    }, (apiError) => {
+      console.error('[useAdminDashboard] API dashboard query failed:', apiError)
+      if (isMounted) {
+        setError('We could not load the dashboard right now. Please try again shortly.')
+        setIsLoading(false)
+      }
+    })
 
     return () => {
       isMounted = false
+      unsubscribe()
     }
   }, [])
 

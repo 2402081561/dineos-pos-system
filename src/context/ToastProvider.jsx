@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ToastContext } from './ToastContext'
 
 function ToastProvider({ children }) {
@@ -15,6 +15,8 @@ function ToastProvider({ children }) {
     clearTimeout(timeoutRef.current)
     setToast(null)
   }
+
+  useEffect(() => () => clearTimeout(timeoutRef.current), [])
 
   return <ToastContext.Provider value={{ toast, showToast, dismissToast }}>{children}</ToastContext.Provider>
 }

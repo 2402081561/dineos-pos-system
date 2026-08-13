@@ -1,4 +1,4 @@
-import { Timestamp, collection, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
+import { Timestamp, collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore'
 import { db } from './firebase'
 
 const ordersCollection = collection(db, 'orders')
@@ -13,7 +13,7 @@ function getTodayBounds() {
   return { start: Timestamp.fromDate(start), end: Timestamp.fromDate(end) }
 }
 
-export async function getAdminDashboardData() {
+export function subscribeToAdminDashboardData(onUpdate, onError) {
   const { start, end } = getTodayBounds()
   const todayOrdersQuery = query(
     ordersCollection,
@@ -30,31 +30,36 @@ export async function getAdminDashboardData() {
   )
   const recentOrdersQuery = query(ordersCollection, orderBy('createdAt', 'desc'), limit(10))
 
-  const [todayOrdersSnapshot, activeOrdersSnapshot, pendingRequestsSnapshot, recentOrdersSnapshot] = await Promise.all([
-    getDocs(todayOrdersQuery),
-    getDocs(activeOrdersQuery),
-    getDocs(pendingRequestsQuery),
-    getDocs(recentOrdersQuery),
-  ])
+  const snapshots = { todayOrders: null, activeOrders: null, pendingRequests: null, recentOrders: null }
 
-  const todayOrders = todayOrdersSnapshot.docs.map((order) => ({ id: order.id, ...order.data() }))
-  const popularFoodCounts = new Map()
+  function publish() {
+    if (Object.values(snapshots).some((snapshot) => snapshot === null)) return
+    const todayOrders = snapshots.todayOrders.docs.map((order) => ({ id: order.id, ...order.data() }))
+    const popularFoodCounts = new Map()
+    todayOrders
+      .filter((order) => !['cancelled', 'canceled'].includes(String(order.status ?? '').toLowerCase()))
+      .forEach((order) => (Array.isArray(order.items) ? order.items : []).forEach((item) => {
+        const name = String(item?.name ?? '').trim() || 'Unnamed item'
+        const current = popularFoodCounts.get(name) ?? { name, quantity: 0 }
+        popularFoodCounts.set(name, { ...current, quantity: current.quantity + Math.max(0, Number(item?.quantity) || 0) })
+      }))
 
-  todayOrders.forEach((order) => {
-    order.items?.forEach((item) => {
-      const current = popularFoodCounts.get(item.name) ?? { name: item.name, quantity: 0 }
-      popularFoodCounts.set(item.name, { ...current, quantity: current.quantity + Number(item.quantity || 0) })
+    onUpdate({
+      todayOrderCount: todayOrders.length,
+      todayRevenue: todayOrders
+        .filter((order) => String(order.paymentStatus ?? '').toLowerCase() === 'paid')
+        .reduce((total, order) => total + Math.max(0, Number(order.grandTotal) || 0), 0),
+      activeOrderCount: snapshots.activeOrders.size,
+      pendingRequestCount: snapshots.pendingRequests.size,
+      popularFoods: [...popularFoodCounts.values()].sort((firstFood, secondFood) => secondFood.quantity - firstFood.quantity).slice(0, 5),
+      recentOrders: snapshots.recentOrders.docs.map((order) => ({ id: order.id, ...order.data() })),
     })
-  })
-
-  return {
-    todayOrderCount: todayOrders.length,
-    todayRevenue: todayOrders
-      .filter((order) => order.status === 'served')
-      .reduce((total, order) => total + Number(order.grandTotal || 0), 0),
-    activeOrderCount: activeOrdersSnapshot.size,
-    pendingRequestCount: pendingRequestsSnapshot.size,
-    popularFoods: [...popularFoodCounts.values()].sort((firstFood, secondFood) => secondFood.quantity - firstFood.quantity).slice(0, 5),
-    recentOrders: recentOrdersSnapshot.docs.map((order) => ({ id: order.id, ...order.data() })),
   }
+
+  return [
+    onSnapshot(todayOrdersQuery, (snapshot) => { snapshots.todayOrders = snapshot; publish() }, onError),
+    onSnapshot(activeOrdersQuery, (snapshot) => { snapshots.activeOrders = snapshot; publish() }, onError),
+    onSnapshot(pendingRequestsQuery, (snapshot) => { snapshots.pendingRequests = snapshot; publish() }, onError),
+    onSnapshot(recentOrdersQuery, (snapshot) => { snapshots.recentOrders = snapshot; publish() }, onError),
+  ]
 }

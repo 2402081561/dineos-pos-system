@@ -2,16 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 import StatePanel from '../common/StatePanel'
 import ServiceRequestCard from './ServiceRequestCard'
 import ServiceRequestSkeleton from './ServiceRequestSkeleton'
-import { completeServiceRequest } from '../../services/serviceRequestService'
+import { completeSupabaseServiceRequest } from '../../services/adminApiService'
 
-function StaffRequestQueue({ compact = false, error, isLoading, requests }) {
+function StaffRequestQueue({ compact = false, error, isLoading, onRefresh, requests }) {
   const [updatingRequestIds, setUpdatingRequestIds] = useState(new Set())
   const [updateError, setUpdateError] = useState('')
   const updatingRequestIdsRef = useRef(new Set())
   const isMountedRef = useRef(true)
   const visibleRequests = compact ? requests.slice(0, 6) : requests
 
-  useEffect(() => () => { isMountedRef.current = false }, [])
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => { isMountedRef.current = false }
+  }, [])
 
   async function handleCompleteRequest(requestId) {
     if (updatingRequestIdsRef.current.has(requestId)) return
@@ -20,10 +23,16 @@ function StaffRequestQueue({ compact = false, error, isLoading, requests }) {
       updatingRequestIdsRef.current.add(requestId)
       setUpdatingRequestIds(new Set(updatingRequestIdsRef.current))
       setUpdateError('')
-      await completeServiceRequest(requestId)
-    } catch (firebaseError) {
-      console.error('[Staff] Failed to complete service request:', firebaseError)
-      setUpdateError(firebaseError.message === 'This service request was already completed by another staff user.' ? 'This request was already completed by another staff user.' : 'We could not complete this request. Please try again.')
+      await completeSupabaseServiceRequest(requestId)
+    } catch (apiError) {
+      if (apiError.message?.includes('already completed') || apiError.message?.includes('unavailable')) {
+        setUpdateError('This request was already completed. The queue has been refreshed.')
+        await onRefresh?.()
+        window.setTimeout(() => { if (isMountedRef.current) setUpdateError('') }, 2500)
+      } else {
+        console.error('[Staff] Failed to complete service request:', apiError)
+        setUpdateError('We could not complete this request. Please try again.')
+      }
     } finally {
       updatingRequestIdsRef.current.delete(requestId)
       if (isMountedRef.current) setUpdatingRequestIds(new Set(updatingRequestIdsRef.current))

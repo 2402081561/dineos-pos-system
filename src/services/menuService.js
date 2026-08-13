@@ -12,6 +12,7 @@ import {
   updateDoc,
 } from 'firebase/firestore'
 import { db } from './firebase'
+import { logAuditEvent } from './auditLogService'
 
 const menuItemsCollection = collection(db, 'menuItems')
 
@@ -67,11 +68,13 @@ export function subscribeToAllMenuItems(onMenuItemsUpdate, onError) {
 }
 
 export async function createMenuItem(menuItem) {
-  return addDoc(menuItemsCollection, {
+  const reference = await addDoc(menuItemsCollection, {
     ...buildMenuItemData(menuItem),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })
+  void logAuditEvent({ action: 'CREATE_MENU_ITEM', category: 'ADMIN', targetType: 'menuItem', targetId: reference.id, details: { name: menuItem.name } })
+  return reference
 }
 
 export async function updateMenuItem(menuItemId, menuItem) {
@@ -79,10 +82,12 @@ export async function updateMenuItem(menuItemId, menuItem) {
     ...buildMenuItemData(menuItem),
     updatedAt: serverTimestamp(),
   })
+  void logAuditEvent({ action: 'UPDATE_MENU_ITEM', category: 'ADMIN', targetType: 'menuItem', targetId: menuItemId, details: { name: menuItem.name } })
 }
 
 export async function deleteMenuItem(menuItemId) {
   await deleteDoc(doc(db, 'menuItems', menuItemId))
+  void logAuditEvent({ action: 'DELETE_MENU_ITEM', category: 'ADMIN', targetType: 'menuItem', targetId: menuItemId })
 }
 
 export async function updateMenuItemFlags(menuItemId, updates) {

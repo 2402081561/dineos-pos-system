@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Button from '../../components/common/Button'
 import ConfirmationDialog from '../../components/common/ConfirmationDialog'
 import SectionHeading from '../../components/common/SectionHeading'
@@ -6,21 +6,25 @@ import StatePanel from '../../components/common/StatePanel'
 import TableFormModal from '../../components/admin/TableFormModal'
 import TableQrModal from '../../components/admin/TableQrModal'
 import useToast from '../../hooks/useToast'
-import {
-  createTable,
-  deleteTable,
-  hasActiveOrdersForTable,
-  subscribeToTables,
-  updateTable,
-} from '../../services/tableService'
+import useOperationalTables from '../../hooks/useOperationalTables'
+import { clearSupabaseAdminTable as clearCompletedTableSession, createSupabaseAdminTable as createTable, deleteSupabaseAdminTable as deleteTable, updateSupabaseAdminTable as updateTable } from '../../services/adminApiService'
 
 function formatTableStatus(status) {
-  return String(status ?? 'available').replace(/\b\w/g, (letter) => letter.toUpperCase())
+  return String(status ?? 'available').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+const statusStyles = {
+  available: 'bg-emerald-50 text-emerald-700',
+  occupied: 'bg-amber-50 text-amber-700',
+  ordering: 'bg-blue-50 text-blue-700',
+  awaiting_payment: 'bg-orange-50 text-orange-700',
+  ready_to_clear: 'bg-sky-50 text-sky-700',
+  inactive: 'bg-slate-100 text-slate-500',
 }
 
 function TableStatusBadge({ status }) {
   return (
-    <span className="inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">
+    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${statusStyles[status] ?? statusStyles.available}`}>
       {formatTableStatus(status)}
     </span>
   )
@@ -36,10 +40,11 @@ function ActiveBadge({ isActive }) {
   )
 }
 
-function TableActions({ onDelete, onEdit, onQr }) {
+function TableActions({ canClear, isClearing, onClear, onDelete, onEdit, onQr }) {
   return (
     <div className="flex flex-wrap items-center gap-2 lg:justify-end">
       <Button className="px-3 py-2 text-xs" onClick={onQr} variant="secondary">QR code</Button>
+      {canClear && <Button className="px-3 py-2 text-xs" disabled={isClearing} onClick={onClear} variant="outline">{isClearing ? 'Clearing...' : 'Clear table'}</Button>}
       <Button className="px-3 py-2 text-xs" onClick={onEdit} variant="outline">Edit</Button>
       <Button className="px-3 py-2 text-xs" onClick={onDelete} variant="danger">Delete</Button>
     </div>
@@ -48,9 +53,7 @@ function TableActions({ onDelete, onEdit, onQr }) {
 
 function TableManagement() {
   const { showToast } = useToast()
-  const [tables, setTables] = useState([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState('')
+  const { tables, isLoading, error } = useOperationalTables()
   const [actionError, setActionError] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [editingTable, setEditingTable] = useState(null)
@@ -58,18 +61,8 @@ function TableManagement() {
   const [qrTable, setQrTable] = useState(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-
-  useEffect(() => subscribeToTables(
-    (tableData) => {
-      setTables(tableData)
-      setIsLoading(false)
-    },
-    (firebaseError) => {
-      console.error('[Table Management] Failed to load tables:', firebaseError)
-      setError('We could not load tables right now. Please try again shortly.')
-      setIsLoading(false)
-    },
-  ), [])
+  const [clearingTable, setClearingTable] = useState(null)
+  const [isClearing, setIsClearing] = useState(false)
 
   const filteredTables = useMemo(
     () => tables.filter((table) => String(table.tableNumber).includes(searchTerm.trim())),
@@ -129,11 +122,6 @@ function TableManagement() {
     try {
       setIsSubmitting(true)
       setActionError('')
-      if (await hasActiveOrdersForTable(deletingTable.id)) {
-        setDeletingTable(null)
-        setActionError('This table currently has active orders.')
-        return
-      }
       await deleteTable(deletingTable.id)
       showToast('Table deleted.')
       setDeletingTable(null)
@@ -142,6 +130,23 @@ function TableManagement() {
       setActionError('We could not delete this table. Please try again.')
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  async function handleClearTable() {
+    if (!clearingTable || isClearing) return
+    try {
+      setIsClearing(true)
+      setActionError('')
+      await clearCompletedTableSession(clearingTable.id)
+      showToast(`Table ${clearingTable.tableNumber} is available for the next customer.`)
+      setClearingTable(null)
+    } catch (firebaseError) {
+      console.error('[Table Management] Failed to clear table:', firebaseError)
+      setActionError(firebaseError instanceof Error ? firebaseError.message : 'We could not clear this table. Please try again.')
+      setClearingTable(null)
+    } finally {
+      setIsClearing(false)
     }
   }
 
@@ -195,6 +200,7 @@ function TableManagement() {
                     <th className="px-5 py-3.5 font-bold">Table number</th>
                     <th className="px-5 py-3.5 font-bold">Capacity</th>
                     <th className="px-5 py-3.5 font-bold">Current status</th>
+                    <th className="px-5 py-3.5 font-bold">Current activity</th>
                     <th className="px-5 py-3.5 font-bold">Active</th>
                     <th className="px-5 py-3.5 text-right font-bold">Actions</th>
                   </tr>
@@ -205,8 +211,9 @@ function TableManagement() {
                       <td className="px-5 py-4 font-semibold text-slate-900">Table {table.tableNumber}</td>
                       <td className="px-5 py-4 text-slate-600">{table.capacity} seats</td>
                       <td className="px-5 py-4"><TableStatusBadge status={table.status} /></td>
+                      <td className="px-5 py-4 text-slate-600">{table.status === 'occupied' ? `${table.participantCount} customer${table.participantCount === 1 ? '' : 's'}` : table.status === 'awaiting_payment' ? `RM ${table.unpaidTotal.toFixed(2)} unpaid` : table.status === 'ordering' ? `${table.tableOrders.length} active order${table.tableOrders.length === 1 ? '' : 's'}` : table.status === 'ready_to_clear' ? 'Ready for turnover' : 'No active session'}</td>
                       <td className="px-5 py-4"><ActiveBadge isActive={table.isActive} /></td>
-                      <td className="px-5 py-4"><TableActions onDelete={() => setDeletingTable(table)} onEdit={() => openEditForm(table)} onQr={() => setQrTable(table)} /></td>
+                      <td className="px-5 py-4"><TableActions canClear={table.status === 'ready_to_clear'} isClearing={isClearing && clearingTable?.id === table.id} onClear={() => setClearingTable(table)} onDelete={() => setDeletingTable(table)} onEdit={() => openEditForm(table)} onQr={() => setQrTable(table)} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -242,6 +249,7 @@ function TableManagement() {
                     <Button className="w-full px-3 py-2 text-xs" onClick={() => openEditForm(table)} variant="outline">Edit table</Button>
                     <Button className="w-full px-3 py-2 text-xs" onClick={() => setDeletingTable(table)} variant="danger">Delete</Button>
                   </div>
+                  {table.status === 'ready_to_clear' && <Button className="mt-2 w-full px-3 py-2 text-xs" disabled={isClearing} onClick={() => setClearingTable(table)} variant="secondary">Clear table</Button>}
                 </article>
               ))}
             </div>
@@ -251,6 +259,7 @@ function TableManagement() {
 
       {isFormOpen && <TableFormModal error={actionError} initialTable={editingTable} isSubmitting={isSubmitting} onCancel={() => { if (!isSubmitting) { setIsFormOpen(false); setEditingTable(null) } }} onSubmit={handleSave} />}
       {deletingTable && <ConfirmationDialog confirmLabel="Delete table" description={`Delete Table ${deletingTable.tableNumber}? This cannot be undone.`} isLoading={isSubmitting} onCancel={() => { if (!isSubmitting) setDeletingTable(null) }} onConfirm={handleDelete} title="Delete table" />}
+      {clearingTable && <ConfirmationDialog confirmLabel="Clear table" description={`Clear Table ${clearingTable.tableNumber}? The completed table session will be ended and the table will become available for the next customer. Historical orders and payment records will remain.`} isLoading={isClearing} onCancel={() => { if (!isClearing) setClearingTable(null) }} onConfirm={handleClearTable} title={`Clear Table ${clearingTable.tableNumber}?`} />}
       {qrTable && <TableQrModal onClose={() => setQrTable(null)} table={qrTable} />}
     </div>
   )

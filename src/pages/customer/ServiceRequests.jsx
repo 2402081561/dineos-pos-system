@@ -3,7 +3,7 @@ import Button from '../../components/common/Button'
 import SectionHeading from '../../components/common/SectionHeading'
 import useCustomerSession from '../../hooks/useCustomerSession'
 import useToast from '../../hooks/useToast'
-import { createServiceRequest } from '../../services/serviceRequestService'
+import { createCustomerServiceRequest } from '../../services/customerApi'
 
 const requestOptions = [
   { type: 'callWaiter', label: 'Call Waiter', description: 'Request help from a staff member.', icon: '♧' },
@@ -26,7 +26,7 @@ function ServiceRequests() {
     try {
       setSubmittingType(requestType)
       setError('')
-      const result = await createServiceRequest(requestType, session)
+      const result = await createCustomerServiceRequest(session.sessionId, requestType)
       showToast(result.duplicate ? `You already have a pending ${label.toLowerCase()} request.` : `${label} request sent.`)
     } catch (firebaseError) {
       console.error('[Service Requests] Failed to create request:', firebaseError)

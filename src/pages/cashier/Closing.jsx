@@ -4,9 +4,9 @@ import Button from '../../components/common/Button'
 import ConfirmationDialog from '../../components/common/ConfirmationDialog'
 import SectionHeading from '../../components/common/SectionHeading'
 import StatePanel from '../../components/common/StatePanel'
-import useAuth from '../../hooks/useAuth'
+import useAdminAuth from '../../hooks/useAdminAuth'
 import useShiftClosing from '../../hooks/useShiftClosing'
-import { createShiftClosing } from '../../services/shiftClosingService'
+import { createSupabaseShiftClosing } from '../../services/adminApiService'
 import { formatCurrency } from '../../utils/currency'
 import { downloadCsv } from '../../utils/reporting'
 
@@ -14,12 +14,12 @@ const paymentRows = [['cash', 'Cash'], ['card', 'Card'], ['touchNGo', "Touch 'n 
 const paymentColors = ['#ea580c', '#f97316', '#fb923c', '#fdba74', '#fed7aa', '#cbd5e1']
 
 function formatDateTime(value) {
-  if (!value?.toDate) return '—'
-  return new Intl.DateTimeFormat('en-MY', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(value.toDate())
+  const date = value?.toDate?.() ?? new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('en-MY', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date)
 }
 
 function ShiftClosing() {
-  const { user } = useAuth()
+  const { authUser: user } = useAdminAuth()
   const { closings, error, isLoading, summary } = useShiftClosing()
   const [isConfirming, setIsConfirming] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
@@ -46,13 +46,12 @@ function ShiftClosing() {
     try {
       setIsClosing(true)
       setCloseError('')
-      const cashierName = user?.displayName || user?.email || `Cashier ${user?.uid?.slice(0, 8) ?? ''}`
-      const closingId = await createShiftClosing({ cashierId: user.uid, cashierName, shiftStartTime, summary })
-      setSuccess({ closingId, grandTotal: summary.grandTotal, transactionCount: summary.transactionCount, closedAt: new Date() })
+      const result = await createSupabaseShiftClosing()
+      setSuccess({ closingId: result.closingId, grandTotal: result.grandTotal, transactionCount: result.transactionCount, closedAt: new Date() })
       setIsConfirming(false)
-    } catch (firebaseError) {
-      console.error('[Shift Closing] Failed to close shift:', firebaseError)
-      setCloseError(firebaseError.message || 'We could not close this shift. Please try again.')
+    } catch (apiError) {
+      console.error('[Shift Closing] Failed to close shift:', apiError)
+      setCloseError(apiError.message || 'We could not close this shift. Please try again.')
       setIsConfirming(false)
     } finally {
       setIsClosing(false)

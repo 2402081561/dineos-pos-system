@@ -6,7 +6,7 @@ import StatePanel from '../../components/common/StatePanel'
 import MenuItemFormModal from '../../components/admin/MenuItemFormModal'
 import useAdminMenu from '../../hooks/useAdminMenu'
 import useToast from '../../hooks/useToast'
-import { createMenuItem, deleteMenuItem, updateMenuItem, updateMenuItemFlags } from '../../services/menuService'
+import { createSupabaseMenuItem as createMenuItem, deleteSupabaseMenuItem as deleteMenuItem, updateSupabaseMenuItem as updateMenuItem, updateSupabaseMenuFlags as updateMenuItemFlags } from '../../services/adminApiService'
 import { uploadMenuImage } from '../../services/cloudinaryService'
 import { formatCurrency } from '../../utils/currency'
 
@@ -86,7 +86,7 @@ function MenuManagement() {
     try {
       setUpdatingItemId(item.id)
       setActionError('')
-      await updateMenuItemFlags(item.id, { [field]: !item[field] })
+      await updateMenuItemFlags(item, { [field]: !item[field] })
     } catch (firebaseError) {
       console.error('[Menu Management] Failed to update food flag:', firebaseError)
       setActionError('We could not update this food item. Please try again.')

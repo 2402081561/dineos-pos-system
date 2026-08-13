@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { CartContext } from './CartContext'
+import { isMenuItemOrderable } from '../services/orderService'
 
 function CartProvider({ children }) {
   const [cartItems, setCartItems] = useState([])
 
   function addToCart(menuItem, quantity = 1, specialInstructions = '') {
-    const safeQuantity = Math.max(1, Number(quantity) || 1)
-    const normalizedInstructions = specialInstructions.trim()
+    const safeQuantity = Number(quantity)
+    if (!isMenuItemOrderable(menuItem) || !Number.isInteger(safeQuantity) || safeQuantity < 1) return false
+    const normalizedInstructions = String(specialInstructions ?? '').trim()
     const cartItemId = `${menuItem.id}-${normalizedInstructions}`
 
     setCartItems((currentItems) => {
@@ -28,6 +30,7 @@ function CartProvider({ children }) {
         specialInstructions: normalizedInstructions,
       }]
     })
+    return true
   }
 
   function updateQuantity(cartItemId, quantity) {

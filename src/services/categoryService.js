@@ -1,13 +1,12 @@
 import {
-  addDoc,
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
@@ -15,6 +14,13 @@ import {
 import { db } from './firebase'
 
 const categoriesCollection = collection(db, 'categories')
+const categoryNameLocksCollection = collection(db, 'categoryNameLocks')
+
+function normalizedCategoryName(value) {
+  const name = String(value ?? '').trim()
+  if (!name) throw new Error('Category name is required.')
+  return name.toLocaleLowerCase()
+}
 
 function buildCategoryData(category) {
   return {
@@ -63,17 +69,44 @@ export async function getCategoryById(categoryId) {
 }
 
 export async function createCategory(category) {
-  return addDoc(categoriesCollection, {
-    ...buildCategoryData(category),
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+  const categoryData = buildCategoryData(category)
+  const normalizedName = normalizedCategoryName(categoryData.name)
+  const categoryReference = doc(categoriesCollection)
+  const lockReference = doc(categoryNameLocksCollection, normalizedName)
+  const categoriesSnapshot = await getDocs(categoriesCollection)
+  if (categoriesSnapshot.docs.some((snapshot) => normalizedCategoryName(snapshot.data().name) === normalizedName)) throw new Error('A category with this name already exists.')
+  return runTransaction(db, async (transaction) => {
+    const lockSnapshot = await transaction.get(lockReference)
+    if (lockSnapshot.exists()) {
+      throw new Error('A category with this name already exists.')
+    }
+    transaction.set(lockReference, { categoryId: categoryReference.id, normalizedName, updatedAt: serverTimestamp() })
+    transaction.set(categoryReference, { ...categoryData, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
+    return categoryReference
   })
 }
 
 export async function updateCategory(categoryId, category) {
-  await updateDoc(doc(db, 'categories', categoryId), {
-    ...buildCategoryData(category),
-    updatedAt: serverTimestamp(),
+  const categoryData = buildCategoryData(category)
+  const normalizedName = normalizedCategoryName(categoryData.name)
+  const categoryReference = doc(db, 'categories', categoryId)
+  const lockReference = doc(categoryNameLocksCollection, normalizedName)
+  const categoriesSnapshot = await getDocs(categoriesCollection)
+  if (categoriesSnapshot.docs.some((snapshot) => snapshot.id !== categoryId && normalizedCategoryName(snapshot.data().name) === normalizedName)) throw new Error('A category with this name already exists.')
+  await runTransaction(db, async (transaction) => {
+    const [categorySnapshot, lockSnapshot] = await Promise.all([transaction.get(categoryReference), transaction.get(lockReference)])
+    if (!categorySnapshot.exists()) throw new Error('This category is no longer available.')
+    if (lockSnapshot.exists() && lockSnapshot.data().categoryId !== categoryId) {
+      throw new Error('A category with this name already exists.')
+    }
+    const previousNormalizedName = normalizedCategoryName(categorySnapshot.data().name)
+    if (previousNormalizedName !== normalizedName) {
+      const previousLockReference = doc(categoryNameLocksCollection, previousNormalizedName)
+      const previousLockSnapshot = await transaction.get(previousLockReference)
+      if (previousLockSnapshot.data()?.categoryId === categoryId) transaction.delete(previousLockReference)
+      transaction.set(lockReference, { categoryId, normalizedName, updatedAt: serverTimestamp() })
+    }
+    transaction.update(categoryReference, { ...categoryData, updatedAt: serverTimestamp() })
   })
 }
 
@@ -90,5 +123,15 @@ export async function isCategoryUsed(categoryId) {
 }
 
 export async function deleteCategory(categoryId) {
-  await deleteDoc(doc(db, 'categories', categoryId))
+  const categoryReference = doc(db, 'categories', categoryId)
+  const menuItems = await getDocs(collection(db, 'menuItems'))
+  if (menuItems.docs.some((snapshot) => snapshot.data().categoryId === categoryId)) throw new Error('This category is currently used by menu items.')
+  await runTransaction(db, async (transaction) => {
+    const categorySnapshot = await transaction.get(categoryReference)
+    if (!categorySnapshot.exists()) throw new Error('This category is no longer available.')
+    const lockReference = doc(categoryNameLocksCollection, normalizedCategoryName(categorySnapshot.data().name))
+    const lockSnapshot = await transaction.get(lockReference)
+    if (lockSnapshot.data()?.categoryId === categoryId) transaction.delete(lockReference)
+    transaction.delete(categoryReference)
+  })
 }

@@ -5,7 +5,7 @@ import StatePanel from '../../components/common/StatePanel'
 import useCustomerSession from '../../hooks/useCustomerSession'
 import useTableSummary from '../../hooks/useTableSummary'
 import useToast from '../../hooks/useToast'
-import { createServiceRequest } from '../../services/serviceRequestService'
+import { createCustomerServiceRequest } from '../../services/customerApi'
 import { formatCurrency } from '../../utils/currency'
 
 function Bill() {
@@ -23,7 +23,7 @@ function Bill() {
     try {
       setIsRequesting(true)
       setRequestError('')
-      const result = await createServiceRequest('requestBill', session, {
+      const result = await createCustomerServiceRequest(session.sessionId, 'requestBill', {
         billMode,
         requestedAmount: selectedAmount,
         tableSessionId: session.tableSessionId,

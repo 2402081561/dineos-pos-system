@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { subscribeToShiftClosings, subscribeToTodayOrderStatuses, subscribeToTodayPaidOrders } from '../services/shiftClosingService'
+import { subscribeToSupabaseSettlement } from '../services/adminApiService'
 
 const methodKeys = {
   Cash: 'cash',
@@ -18,19 +18,17 @@ function useShiftClosing() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    let settled = 0
-    const complete = () => { settled += 1; if (settled >= 3) setIsLoading(false) }
-    const onError = (firebaseError) => {
-      console.error('[Shift Closing] Firestore query failed:', firebaseError)
+    const onError = (apiError) => {
+      console.error('[Shift Closing] API query failed:', apiError)
       setError('We could not load settlement data. Please try again shortly.')
       setIsLoading(false)
     }
-    const subscriptions = [
-      subscribeToTodayPaidOrders((nextOrders) => { setOrders(nextOrders); complete() }, onError),
-      subscribeToTodayOrderStatuses((nextOrders) => { setTodayOrders(nextOrders); complete() }, onError),
-      subscribeToShiftClosings((nextClosings) => { setClosings(nextClosings); complete() }, onError),
-    ]
-    return () => subscriptions.forEach((unsubscribe) => unsubscribe())
+    return subscribeToSupabaseSettlement((data) => {
+      setOrders(data.paidPayments.map((payment) => ({ ...payment, grandTotal: payment.amount })))
+      setTodayOrders(data.todayOrders)
+      setClosings(data.closings.map((closing) => ({ ...closing, ...(closing.summary ?? {}) })))
+      setIsLoading(false)
+    }, onError)
   }, [])
 
   const summary = useMemo(() => {
