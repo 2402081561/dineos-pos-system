@@ -27,7 +27,7 @@ function CustomerLayout() {
 
   const floatingCart = session && <Link aria-label={`View cart${cartItemCount ? `, ${cartItemCount} items` : ''}`} className="fixed bottom-20 right-5 z-30 flex h-14 min-w-14 items-center justify-center gap-2 rounded-full bg-orange-600 px-4 text-lg font-bold text-white shadow-xl shadow-orange-600/30 transition hover:-translate-y-0.5 hover:bg-orange-700 focus:outline-none focus:ring-4 focus:ring-orange-200 sm:bottom-7 sm:right-7" to="/cart"><span aria-hidden="true">🛒</span>{cartItemCount > 0 && <span className="text-sm">{cartItemCount}</span>}<span className="sr-only">View cart</span></Link>
 
-  return <PortalLayout area="Customer" fixedMobileNavigation floatingAction={floatingCart} headerAction={session && <button aria-label="Leave customer session" className="rounded-lg px-2 py-1 text-xs font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-200" onClick={handleLeaveSession} type="button">Leave</button>} navigation={navigation} />
+  return <PortalLayout area="Customer" floatingAction={floatingCart} headerAction={session && <button aria-label="Leave customer session" className="rounded-lg px-2 py-1 text-xs font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-200" onClick={handleLeaveSession} type="button">Leave</button>} mobileNavigationTop navigation={navigation} />
 }
 
 export default CustomerLayout
