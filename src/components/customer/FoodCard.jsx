@@ -23,8 +23,8 @@ function FoodCard({ categoryName = 'Menu item', food, compact = false }) {
         <span className="whitespace-nowrap text-base font-extrabold text-orange-600">{formatCurrency(food.price)}</span>
       </div>
       <p className="mt-3 line-clamp-2 text-sm leading-5 text-slate-500">{food.description || 'No description is available for this item.'}</p>
-      <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
-        <span className="text-xs font-medium text-slate-400">{isUnavailable ? 'Currently unavailable' : 'Made fresh to order'}</span>
+      <div className="mt-5 flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
+        {isUnavailable && <span className="mr-auto text-xs font-medium text-slate-400">Currently unavailable</span>}
         <Button className="shrink-0 px-3 py-2 text-xs" disabled={isUnavailable || isBusy} onClick={() => addItem(food)}>{isAdding ? 'Adding...' : isAdded ? '✔ Added' : 'Add to Cart'}</Button>
       </div>
     </div>
