@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom'
 import Button from '../common/Button'
 import { formatCurrency } from '../../utils/currency'
+import { customerOrderLabel } from '../../utils/customerOrder'
 
 function valueOrDash(value) {
   const normalizedValue = String(value ?? '').trim()
@@ -34,7 +35,7 @@ function CustomerOrderDetailsModal({ onClose, order }) {
 
   const items = Array.isArray(order.items) ? order.items : []
   const discount = positiveAmount(order.discountAmount ?? order.discount)
-  const orderNumber = order.orderNumber ?? `#${String(order.id ?? '').slice(-6).toUpperCase() || '—'}`
+  const orderNumber = customerOrderLabel(order)
   const orderNote = textValue(order.orderNotes ?? order.notes ?? order.specialInstructions)
 
   return createPortal(

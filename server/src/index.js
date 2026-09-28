@@ -452,7 +452,7 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const existing = await client.query('SELECT id, status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
+    const existing = await client.query('SELECT id, table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
     if (existing.rows[0]) {
       await client.query('COMMIT')
       return response.status(200).json({ order: existing.rows[0], duplicate: true })
@@ -472,7 +472,7 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
     const serviceCharge = roundMoney(subtotal * 0.1)
     const sst = roundMoney(subtotal * 0.06)
     const grandTotal = roundMoney(subtotal + serviceCharge + sst)
-    const created = await client.query("INSERT INTO orders (table_session_id, customer_session_id, member_id, status, payment_status, subtotal, service_charge, sst, grand_total, client_request_id) VALUES ($1, $2, $3, 'received', 'pending', $4, $5, $6, $7, $8) RETURNING id, status, payment_status AS \"paymentStatus\", grand_total AS \"grandTotal\", created_at AS \"createdAt\"", [request.customerSession.tableSessionId, request.customerSession.id, request.customerSession.isSharedTable ? null : request.customerSession.memberId, subtotal, serviceCharge, sst, grandTotal, requestId])
+    const created = await client.query("INSERT INTO orders (table_session_id, customer_session_id, member_id, status, payment_status, subtotal, service_charge, sst, grand_total, client_request_id) VALUES ($1, $2, $3, 'received', 'pending', $4, $5, $6, $7, $8) RETURNING id, table_order_number AS \"tableOrderNumber\", status, payment_status AS \"paymentStatus\", grand_total AS \"grandTotal\", created_at AS \"createdAt\"", [request.customerSession.tableSessionId, request.customerSession.id, request.customerSession.isSharedTable ? null : request.customerSession.memberId, subtotal, serviceCharge, sst, grandTotal, requestId])
     const orderId = created.rows[0].id
     for (const item of items) await client.query('INSERT INTO order_items (order_id, menu_item_id, item_name, unit_price, quantity, notes) VALUES ($1, $2, $3, $4, $5, $6)', [orderId, item.id, item.name, item.unitPrice, item.quantity, item.notes])
     await client.query('COMMIT')
@@ -480,7 +480,7 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
   } catch (error) {
     await client.query('ROLLBACK')
     if (error.code === '23505') {
-      const existing = await pool.query('SELECT id, status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
+      const existing = await pool.query('SELECT id, table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
       if (existing.rows[0]) return response.status(200).json({ order: existing.rows[0], duplicate: true })
     }
     if (String(error.message).includes('no longer available') || String(error.message).includes('no longer active')) return response.status(409).json({ error: error.message })
@@ -491,15 +491,18 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
 app.get('/api/v1/public/orders', requireCustomerSession, async (request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.status, orders.payment_status AS "paymentStatus",
+      SELECT orders.id, orders.table_order_number AS "tableOrderNumber", restaurant_tables.table_number AS "tableNumber", orders.status, orders.payment_status AS "paymentStatus",
         orders.subtotal, orders.discount_amount AS "discountAmount",
         orders.service_charge AS "serviceCharge", orders.sst, orders.grand_total AS "grandTotal",
         orders.created_at AS "createdAt", orders.updated_at AS "updatedAt",
         COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'quantity', order_items.quantity, 'notes', order_items.notes, 'imageUrl', menu_items.image_url) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
-      FROM orders LEFT JOIN order_items ON order_items.order_id = orders.id
+      FROM orders
+        JOIN table_sessions ON table_sessions.id = orders.table_session_id
+        JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+        LEFT JOIN order_items ON order_items.order_id = orders.id
         LEFT JOIN menu_items ON menu_items.id = order_items.menu_item_id
       WHERE orders.customer_session_id = $1
-      GROUP BY orders.id
+      GROUP BY orders.id, restaurant_tables.table_number
       ORDER BY orders.created_at DESC
     `, [request.customerSession.id])
     response.status(200).json({ orders: rows })
@@ -563,7 +566,7 @@ app.get('/api/v1/public/table-summary', requireCustomerSession, async (request, 
 app.get('/api/v1/kitchen/orders', requireAuthenticatedUser, requireRole('admin', 'kitchen'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.status, orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
+      SELECT orders.id, orders.order_number AS "orderNumber", orders.status, orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
         restaurant_tables.table_number AS "tableNumber", customer_sessions.nickname AS "customerNickname",
         COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'quantity', order_items.quantity, 'notes', order_items.notes, 'imageUrl', menu_items.image_url) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
       FROM orders
@@ -778,7 +781,7 @@ app.get('/api/v1/staff/tables', requireAuthenticatedUser, requireRole('admin', '
 app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.table_session_id AS "tableSessionId", orders.member_id AS "memberId", orders.status,
+      SELECT orders.id, orders.order_number AS "orderNumber", orders.table_session_id AS "tableSessionId", orders.member_id AS "memberId", orders.status,
         orders.payment_status AS "paymentStatus", orders.subtotal, orders.discount_amount AS "discountAmount",
         orders.service_charge AS "serviceCharge", orders.sst, orders.grand_total AS "grandTotal",
         orders.created_at AS "createdAt", orders.updated_at AS "updatedAt", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber",
@@ -860,7 +863,7 @@ app.get('/api/v1/cashier/shift-closings/:closingId', requireAuthenticatedUser, r
 app.get('/api/v1/admin/orders', requireAuthenticatedUser, requireRole('admin'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.status, orders.payment_status AS "paymentStatus", orders.subtotal,
+      SELECT orders.id, orders.order_number AS "orderNumber", orders.status, orders.payment_status AS "paymentStatus", orders.subtotal,
         orders.discount_amount AS "discountAmount", orders.service_charge AS "serviceCharge", orders.sst,
         orders.grand_total AS "grandTotal", orders.created_at AS "createdAt", orders.updated_at AS "updatedAt",
         orders.paid_at AS "paidAt", orders.receipt_number AS "receiptNumber", orders.payment_method AS "paymentMethod",
@@ -900,7 +903,7 @@ app.get('/api/v1/admin/dashboard', requireAuthenticatedUser, requireRole('admin'
     const [metrics, popularFoods, recentOrders] = await Promise.all([
       pool.query(`SELECT count(*) FILTER (WHERE (created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date)::int AS "todayOrderCount", COALESCE(sum(grand_total) FILTER (WHERE payment_status = 'paid' AND (paid_at AT TIME ZONE 'Asia/Kuching')::date = $1::date), 0) AS "todayRevenue", count(*) FILTER (WHERE status IN ('received', 'preparing', 'ready'))::int AS "activeOrderCount" FROM orders`, [today]),
       pool.query(`SELECT order_items.item_name AS name, sum(order_items.quantity)::int AS quantity FROM orders JOIN order_items ON order_items.order_id = orders.id WHERE orders.status <> 'cancelled' AND (orders.created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date GROUP BY order_items.item_name ORDER BY quantity DESC, name ASC LIMIT 5`, [today]),
-      pool.query(`SELECT orders.id, orders.status, orders.grand_total AS "grandTotal", orders.created_at AS "createdAt", restaurant_tables.table_number AS "tableNumber" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id ORDER BY orders.created_at DESC LIMIT 5`),
+      pool.query(`SELECT orders.id, orders.order_number AS "orderNumber", orders.status, orders.grand_total AS "grandTotal", orders.created_at AS "createdAt", restaurant_tables.table_number AS "tableNumber" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id ORDER BY orders.created_at DESC LIMIT 5`),
     ])
     const requests = await pool.query("SELECT count(*)::int AS count FROM service_requests WHERE status = 'pending'")
     response.status(200).json({ dashboard: { ...metrics.rows[0], pendingRequestCount: requests.rows[0].count, popularFoods: popularFoods.rows, recentOrders: recentOrders.rows } })

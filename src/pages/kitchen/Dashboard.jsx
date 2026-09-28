@@ -24,6 +24,8 @@ function Dashboard() {
   const updatingOrderIdsRef = useRef(new Set())
   const isMountedRef = useRef(true)
   const audioContextRef = useRef(null)
+  const alertOscillatorRef = useRef(null)
+  const soundEnabledRef = useRef(readSoundPreference())
   const lastSoundAlertKeyRef = useRef('')
   const [soundEnabled, setSoundEnabled] = useState(readSoundPreference)
   const newOrders = useMemo(() => orders.filter((order) => newOrderIds.has(order.id)), [newOrderIds, orders])
@@ -51,15 +53,38 @@ function Dashboard() {
       const context = audioContextRef.current ?? new AudioContext()
       audioContextRef.current = context
       const playTone = () => {
+        if (!isMountedRef.current || !soundEnabledRef.current) return
+        alertOscillatorRef.current?.stop()
         const oscillator = context.createOscillator()
         const gain = context.createGain()
-        oscillator.frequency.value = 880
-        gain.gain.setValueAtTime(0.06, context.currentTime)
-        gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.18)
+        const startTime = context.currentTime
+        // Two doorbell-style chimes with a natural decay, not sustained alarm beeps.
+        oscillator.type = 'sine'
+        gain.gain.setValueAtTime(0, startTime)
+        const notes = [
+          { offset: 0, frequency: 783.99, duration: 0.42 },
+          { offset: 0.45, frequency: 659.25, duration: 1.05 },
+          { offset: 1.5, frequency: 783.99, duration: 0.42 },
+          { offset: 1.95, frequency: 659.25, duration: 1.05 },
+        ]
+        for (const note of notes) {
+          const noteStart = startTime + note.offset
+          oscillator.frequency.setValueAtTime(note.frequency, noteStart)
+          gain.gain.setValueAtTime(0, noteStart)
+          gain.gain.linearRampToValueAtTime(0.6, noteStart + 0.008)
+          gain.gain.exponentialRampToValueAtTime(0.001, noteStart + note.duration - 0.02)
+          gain.gain.linearRampToValueAtTime(0, noteStart + note.duration)
+        }
         oscillator.connect(gain)
         gain.connect(context.destination)
-        oscillator.start()
-        oscillator.stop(context.currentTime + 0.18)
+        alertOscillatorRef.current = oscillator
+        oscillator.onended = () => {
+          oscillator.disconnect()
+          gain.disconnect()
+          if (alertOscillatorRef.current === oscillator) alertOscillatorRef.current = null
+        }
+        oscillator.start(startTime)
+        oscillator.stop(startTime + 3)
       }
       if (context.state === 'suspended') context.resume().then(playTone).catch(() => {})
       else playTone()
@@ -68,6 +93,19 @@ function Dashboard() {
 
   function toggleSound() {
     const nextEnabled = !soundEnabled
+    soundEnabledRef.current = nextEnabled
+    if (!nextEnabled) alertOscillatorRef.current?.stop()
+    else {
+      // Unlock audio on the button click so browser autoplay rules allow later alerts.
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext
+        if (AudioContext) {
+          const context = audioContextRef.current ?? new AudioContext()
+          audioContextRef.current = context
+          context.resume().catch(() => {})
+        }
+      } catch { /* The visual alert still works when audio is unavailable. */ }
+    }
     setSoundEnabled(nextEnabled)
     try { localStorage.setItem(soundPreferenceKey, String(nextEnabled)) } catch { /* Sound preference is optional UX state. */ }
   }

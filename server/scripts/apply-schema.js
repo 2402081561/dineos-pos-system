@@ -10,7 +10,7 @@ dotenv.config({ path: path.join(serverDirectory, '.env') })
 
 if (!process.env.DATABASE_URL) throw new Error('Set DATABASE_URL in server/.env before applying the schema.')
 
-const migrations = ['001_initial_schema.sql', '002_firebase_snapshot.sql', '003_source_mapping.sql', '004_order_import_support.sql', '005_operational_import_support.sql', '006_supabase_auth_identities.sql', '007_lock_down_direct_database_access.sql', '008_customer_session_tokens.sql', '009_order_idempotency.sql', '010_receipt_sequences.sql', '011_new_operational_records.sql', '012_shared_table_mode.sql', '013_menu_category_metadata.sql', '014_customer_member_sessions.sql']
+const migrations = ['001_initial_schema.sql', '002_firebase_snapshot.sql', '003_source_mapping.sql', '004_order_import_support.sql', '005_operational_import_support.sql', '006_supabase_auth_identities.sql', '007_lock_down_direct_database_access.sql', '008_customer_session_tokens.sql', '009_order_idempotency.sql', '010_receipt_sequences.sql', '011_new_operational_records.sql', '012_shared_table_mode.sql', '013_menu_category_metadata.sql', '014_customer_member_sessions.sql', '015_daily_order_numbers.sql', '016_table_order_numbers.sql']
 const { Pool } = pg
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 

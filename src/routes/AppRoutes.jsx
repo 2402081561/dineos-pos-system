@@ -24,6 +24,7 @@ import FoodDetails from '../pages/customer/FoodDetails'
 import JoinSession from '../pages/customer/JoinSession'
 import Landing from '../pages/customer/Landing'
 import Menu from '../pages/customer/Menu'
+import More from '../pages/customer/More'
 import OrderHistory from '../pages/customer/OrderHistory'
 import ServiceRequests from '../pages/customer/ServiceRequests'
 import Tracking from '../pages/customer/Tracking'
@@ -49,6 +50,7 @@ function AppRoutes() {
         <Route path="tracking" element={<Tracking />} />
         <Route element={<CustomerSessionRoute />}>
           <Route path="menu" element={<Menu />} />
+          <Route path="more" element={<More />} />
           <Route path="menu/:itemId" element={<FoodDetails />} />
           <Route path="cart" element={<Cart />} />
           <Route path="service-requests" element={<ServiceRequests />} />

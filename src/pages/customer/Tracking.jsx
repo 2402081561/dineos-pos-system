@@ -9,11 +9,11 @@ import useCustomerSession from '../../hooks/useCustomerSession'
 import useLatestOrder from '../../hooks/useLatestOrder'
 import { formatCurrency } from '../../utils/currency'
 import { estimatePreparationTime } from '../../utils/preparationEstimate'
+import { customerOrderLabel as getOrderNumber } from '../../utils/customerOrder'
 
-const statuses = [{ key: 'received', title: 'Received', text: 'Your order has reached the kitchen.', icon: '✓' }, { key: 'preparing', title: 'Preparing', text: 'Our chefs are making it fresh.', icon: '⌁' }, { key: 'ready', title: 'Ready', text: 'Your dishes are almost at your table.', icon: '★' }, { key: 'served', title: 'Served', text: 'Enjoy your meal!', icon: '✓' }]
+const statuses = [{ key: 'received', title: 'Received', text: 'Your order has reached the kitchen.', icon: '✓' }, { key: 'preparing', title: 'Preparing', text: 'Your food is being prepared.', icon: '⌁' }, { key: 'ready', title: 'Ready', text: 'Your dishes are almost at your table.', icon: '★' }, { key: 'served', title: 'Served', text: 'Enjoy your meal!', icon: '✓' }]
 
 function formatStatus(status) { return String(status ?? 'received').replace(/\b\w/g, (letter) => letter.toUpperCase()) }
-function getOrderNumber(order) { return order?.orderNumber ?? `#${String(order?.id ?? '').slice(-6).toUpperCase() || '—'}` }
 
 function itemQuantity(items) {
   return Math.max(1, (items ?? []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0))
@@ -22,7 +22,7 @@ function itemQuantity(items) {
 function getPreparationEstimate(status, order) {
   const totalQuantity = itemQuantity(order.items)
 
-  if (status === 'ready') return { detail: 'Your dishes are ready.', time: 'Ready for serving', totalQuantity }
+  if (status === 'ready') return { detail: 'Your dishes are ready.', time: 'Ready', totalQuantity }
   if (status === 'served') return { detail: 'Your order has been completed.', time: 'Completed', totalQuantity }
 
   const estimate = estimatePreparationTime(totalQuantity, status)

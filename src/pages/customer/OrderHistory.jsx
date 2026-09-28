@@ -11,6 +11,7 @@ import useCustomerSession from '../../hooks/useCustomerSession'
 import useToast from '../../hooks/useToast'
 import { cancelCustomerOrder, getPublicMenu } from '../../services/customerApi'
 import { formatCurrency } from '../../utils/currency'
+import { customerOrderLabel as orderNumber } from '../../utils/customerOrder'
 
 function formatDateTime(timestamp) {
   const date = timestamp?.toDate?.() ?? new Date(timestamp)
@@ -18,7 +19,6 @@ function formatDateTime(timestamp) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
-function orderNumber(order) { return order.orderNumber ?? `#${String(order?.id ?? '').slice(-6).toUpperCase() || '—'}` }
 function quantityOf(items) { return (Array.isArray(items) ? items : []).reduce((total, item) => total + Math.max(0, Math.floor(Number(item?.quantity) || 0)), 0) }
 function isCancellable(order) { return String(order?.status ?? '').toLowerCase() === 'received' && String(order?.paymentStatus ?? 'pending').toLowerCase() !== 'paid' }
 function isOrderableMenuItem(item) { return item?.id && String(item.name ?? '').trim() && item.isAvailable === true && Number.isFinite(Number(item.price)) && Number(item.price) >= 0 }
