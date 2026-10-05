@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import useCart from './useCart'
-import useToast from './useToast'
+import useToast from './useCustomerToast'
 import { isMenuItemOrderable } from '../services/orderService'
 
 const wait = (duration) => new Promise((resolve) => setTimeout(resolve, duration))

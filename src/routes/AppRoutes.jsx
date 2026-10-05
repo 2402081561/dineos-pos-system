@@ -18,6 +18,7 @@ import TableManagement from '../pages/admin/TableManagement'
 import AuditLog from '../pages/admin/AuditLog'
 import Members from '../pages/admin/Members'
 import Rewards from '../pages/admin/Rewards'
+import ShopSettings from '../pages/admin/ShopSettings'
 import Bill from '../pages/customer/Bill'
 import Cart from '../pages/customer/Cart'
 import FoodDetails from '../pages/customer/FoodDetails'
@@ -36,6 +37,7 @@ import StaffDashboard from '../pages/staff/Dashboard'
 import Requests from '../pages/staff/Requests'
 import Tables from '../pages/staff/Tables'
 import CashierDashboard from '../pages/cashier/Dashboard'
+import CashierNewOrder from '../pages/cashier/NewOrder'
 import Receipt from '../pages/cashier/Receipt'
 import ReceiptHistory from '../pages/cashier/ReceiptHistory'
 import ShiftClosing from '../pages/cashier/Closing'
@@ -75,6 +77,7 @@ function AppRoutes() {
       <Route path="admin/login" element={<Login />} />
       <Route path="cashier" element={<ProtectedCashierRoute><CashierLayout /></ProtectedCashierRoute>}>
         <Route index element={<CashierDashboard />} />
+        <Route path="new-order" element={<CashierNewOrder />} />
         <Route path="history" element={<ReceiptHistory />} />
         <Route path="receipt/:receiptNumber" element={<Receipt />} />
         <Route path="closing" element={<ShiftClosing />} />
@@ -91,6 +94,7 @@ function AppRoutes() {
         <Route path="audit-log" element={<AuditLog />} />
         <Route path="members" element={<Members />} />
         <Route path="rewards" element={<Rewards />} />
+        <Route path="settings" element={<ShopSettings />} />
       </Route>
 
       <Route path="*" element={<Navigate replace to="/" />} />

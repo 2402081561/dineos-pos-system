@@ -82,6 +82,33 @@
   }
 }
 
+.receipt-preview { background: #e5e7eb; border-radius: 12px; padding: 24px 16px 40px; }
+.receipt-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-bottom: 24px; }
+.thermal-receipt { box-sizing: border-box; width: 100%; max-width: 440px; margin: 0 auto; padding: 28px 24px; background: #fff; color: #111; border-radius: 6px; box-shadow: 0 12px 32px rgb(0 0 0 / 8%); font-family: Arial, sans-serif; font-size: 15px; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.receipt-heading { text-align: center; padding-bottom: 18px; }
+.receipt-heading h1 { font-size: 23px; font-weight: 700; line-height: 1.2; }
+.receipt-heading > p { margin-top: 5px; }
+.receipt-heading .receipt-table-label { margin-top: 16px; font-size: 12px; letter-spacing: .1em; }
+.receipt-heading .receipt-table-number { margin-top: 0; font-size: 36px; line-height: 1.15; font-weight: 700; overflow-wrap: anywhere; }
+.receipt-block { border-top: 1px dashed #999; padding: 14px 0; }
+.receipt-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr); gap: 12px; align-items: baseline; margin: 3px 0; }
+.receipt-row > * { min-width: 0; overflow-wrap: anywhere; }
+.receipt-row dd, .receipt-amount { text-align: right; }
+.receipt-item { margin: 5px 0; break-inside: avoid; }
+.receipt-item .receipt-row { grid-template-columns: minmax(0, 1fr) auto; }
+.receipt-amount { white-space: nowrap; }
+.receipt-item-note { padding-left: 16px; font-size: .85em; color: #555; overflow-wrap: anywhere; }
+.receipt-totals .receipt-row { grid-template-columns: minmax(0, 1fr) auto; }
+.receipt-total { margin-top: 12px; font-size: 1.2em; font-weight: 700; }
+.receipt-change { font-weight: 700; }
+.receipt-footer { text-align: center; padding-bottom: 0; }
+@media (max-width: 480px) {
+  .receipt-preview { padding: 16px 8px 24px; }
+  .thermal-receipt { padding: 22px 14px; font-size: 13px; }
+  .receipt-heading h1 { font-size: 21px; }
+  .receipt-row { gap: 8px; }
+}
+
 @media print {
   body {
     background: #fff !important;
@@ -97,4 +124,49 @@
     border: 0 !important;
     box-shadow: none !important;
   }
+
+  /* The global header rule hides the portal header, not the receipt header. */
+  .receipt-print header {
+    display: block !important;
+  }
+
+  body:has(.thermal-receipt) main {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .receipt-preview { padding: 0; background: #fff; border-radius: 0; }
+
+  body:has(.thermal-receipt) main > div > :not(.thermal-receipt) {
+    display: none !important;
+  }
+
+  .thermal-receipt {
+    box-sizing: border-box;
+    width: 72mm !important;
+    max-width: 72mm !important;
+    margin: 0 auto !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+    font-size: 10pt !important;
+    line-height: 1.35 !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: economy;
+    print-color-adjust: economy;
+    padding: 2mm !important;
+  }
+
+  .receipt-heading,
+  .receipt-footer,
+  .receipt-row {
+    break-inside: avoid;
+  }
+  .receipt-heading { padding-bottom: 3mm; }
+  .receipt-heading h1 { font-size: 14pt; }
+  .receipt-block { padding: 3mm 0; }
+  .receipt-footer { padding-bottom: 0; }
+  .receipt-row { gap: 2mm; }
 }

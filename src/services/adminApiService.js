@@ -84,8 +84,17 @@ export async function completeSupabaseServiceRequest(requestId) { return (await 
 export async function findSupabaseCashierMember(identifier) { return (await authenticatedApiRequest(`/api/v1/cashier/members/${encodeURIComponent(identifier)}`)).member }
 export function subscribeToSupabaseCashierRewards(onData, onError) { return poll(async () => (await authenticatedApiRequest('/api/v1/cashier/rewards')).rewards, onData, onError, 15000) }
 export async function redeemSupabaseCashierReward(memberId, rewardId) { return (await authenticatedApiRequest(`/api/v1/cashier/rewards/${encodeURIComponent(rewardId)}/redeem`, { method: 'POST', body: { memberId } })).redemption }
-export async function completeSupabaseTablePayment({ orderIds, paymentMethod, discount }) { return (await authenticatedApiRequest('/api/v1/cashier/payments', { method: 'POST', body: { orderIds, paymentMethod, discount } })).payment }
+export async function completeSupabaseTablePayment({ orderIds, paymentMethod, discount, cashReceived, expectedAmount }) { return (await authenticatedApiRequest('/api/v1/cashier/payments', { method: 'POST', body: { orderIds, paymentMethod, discount, cashReceived, expectedAmount } })).payment }
 export function subscribeToSupabasePendingPayments(onData, onError) { return poll(async () => authenticatedApiRequest('/api/v1/cashier/pending-orders'), onData, onError, 5000) }
+export async function getSupabaseCashierOrderSetup() { return authenticatedApiRequest('/api/v1/cashier/order-setup') }
+export async function createSupabaseCashierOrder({ tableId, expectedTableSessionId, customerNickname, items, requestId }) {
+  return authenticatedApiRequest('/api/v1/cashier/orders', {
+    method: 'POST',
+    body: { tableId, expectedTableSessionId, customerNickname, items },
+    headers: { 'Idempotency-Key': requestId },
+  })
+}
+export async function saveSupabaseCashierTableLayout(positions) { return authenticatedApiRequest('/api/v1/cashier/table-layout', { method: 'PATCH', body: { positions } }) }
 export function subscribeToSupabaseReceipts(onData, onError) { return poll(async () => (await authenticatedApiRequest('/api/v1/cashier/receipts')).receipts.map((receipt) => ({ ...receipt, grandTotal: receipt.amount })), onData, onError, 15000) }
 export function subscribeToSupabaseReceipt(receiptNumber, onData, onError) { return poll(async () => { const receipt = (await authenticatedApiRequest(`/api/v1/cashier/receipts/${encodeURIComponent(receiptNumber)}`)).receipt; return { ...receipt, grandTotal: receipt.amount, cashierId: receipt.cashierName } }, onData, onError, 15000) }
 export async function reprintSupabaseReceipt(receiptNumber) { await authenticatedApiRequest(`/api/v1/cashier/receipts/${encodeURIComponent(receiptNumber)}/reprint`, { method: 'POST' }) }

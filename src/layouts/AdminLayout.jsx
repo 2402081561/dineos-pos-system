@@ -10,6 +10,7 @@ const navigation = [
   { label: 'Members', to: '/admin/members' },
   { label: 'Rewards', to: '/admin/rewards' },
   { label: 'Audit log', to: '/admin/audit-log' },
+  { label: 'Shop settings', to: '/admin/settings' },
 ]
 
 function AdminLayout() {

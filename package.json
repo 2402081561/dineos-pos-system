@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test:customer-language": "node --test tests/customerLanguage.test.mjs",
     "preview": "vite preview",
     "verify:firebase": "node scripts/verify-firebase.mjs",
     "seed:firestore": "node scripts/seed-firestore.mjs",
@@ -20,8 +21,10 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
     "firebase": "^11.10.0",
+    "i18next": "^26.4.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react-i18next": "^17.0.15",
     "react-router-dom": "^7.8.2"
   },
   "devDependencies": {

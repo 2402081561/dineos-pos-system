@@ -46,12 +46,13 @@ export async function getSupabaseAccessToken() {
   return data.session.access_token
 }
 
-async function sendAuthenticatedRequest(path, { body, method }, accessToken) {
+async function sendAuthenticatedRequest(path, { body, method, headers = {} }, accessToken) {
   const response = await fetch(`${apiUrl}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...headers,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   })
@@ -59,15 +60,15 @@ async function sendAuthenticatedRequest(path, { body, method }, accessToken) {
   return { data, response }
 }
 
-export async function authenticatedApiRequest(path, { body, method = 'GET' } = {}) {
+export async function authenticatedApiRequest(path, { body, method = 'GET', headers = {} } = {}) {
   let accessToken = await getSupabaseAccessToken()
-  let result = await sendAuthenticatedRequest(path, { body, method }, accessToken)
+  let result = await sendAuthenticatedRequest(path, { body, method, headers }, accessToken)
 
   if (result.response.status === 401 && supabase) {
     const { data: refreshed, error } = await supabase.auth.refreshSession()
     if (!error && refreshed.session?.access_token) {
       accessToken = refreshed.session.access_token
-      result = await sendAuthenticatedRequest(path, { body, method }, accessToken)
+      result = await sendAuthenticatedRequest(path, { body, method, headers }, accessToken)
     }
   }
 

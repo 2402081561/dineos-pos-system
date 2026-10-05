@@ -1,8 +1,15 @@
-import { formatCurrency } from './currency'
+import { formatCurrency } from './currency.js'
+import { moneyToCents } from './cashPayment.js'
 
 export function getReceiptDetails(receipt) {
   const orders = receipt?.orders ?? []
   const items = orders.flatMap((order) => order.items ?? [])
+  const receivedCents = moneyToCents(receipt?.cashReceived)
+  const changeCents = moneyToCents(receipt?.changeAmount)
+  const totalCents = moneyToCents(receipt?.grandTotal)
+  const cashTender = receipt?.paymentMethod === 'Cash' && receivedCents !== null && changeCents !== null && totalCents !== null && receivedCents - totalCents === changeCents
+    ? { received: receivedCents / 100, change: changeCents / 100 }
+    : null
   return {
     cashier: receipt?.cashierName || (receipt?.cashierId ? `Cashier ${String(receipt.cashierId).slice(0, 8).toUpperCase()}` : '—'),
     customers: [...new Set(orders.map((order) => order.customerNickname || 'Guest'))],
@@ -11,6 +18,7 @@ export function getReceiptDetails(receipt) {
     sst: orders.reduce((sum, order) => sum + (Number(order.sst) || 0), 0),
     subtotal: orders.reduce((sum, order) => sum + (Number(order.subtotal) || 0), 0),
     discount: orders.reduce((sum, order) => sum + Math.max(0, Number(order.discountAmount) || 0), 0),
+    cashTender,
   }
 }
 
@@ -18,11 +26,11 @@ function pdfText(value) {
   return String(value ?? '').replace(/[^\x20-\x7E]/g, '?').replace(/[\\()]/g, '\\$&')
 }
 
-export function downloadReceiptPdf(receipt) {
+export function downloadReceiptPdf(receipt, shopName = 'DineOS') {
   const details = getReceiptDetails(receipt)
   const paidDate = receipt.paidAt?.toDate?.() ?? new Date(receipt.paidAt)
   const lines = [
-    'DineOS Restaurant',
+    receipt.restaurantName || shopName,
     'Receipt',
     `Receipt: ${receipt.receiptNumber}`,
     `Date: ${paidDate.toLocaleDateString('en-MY')} ${paidDate.toLocaleTimeString('en-MY')}`,
@@ -38,6 +46,7 @@ export function downloadReceiptPdf(receipt) {
     `Service charge: ${formatCurrency(details.serviceCharge)}`,
     `SST: ${formatCurrency(details.sst)}`,
     `Grand total: ${formatCurrency(receipt.grandTotal)}`,
+    ...(details.cashTender ? [`Cash received: ${formatCurrency(details.cashTender.received)}`, `Change: ${formatCurrency(details.cashTender.change)}`] : []),
     '',
     'Thank You For Dining With Us',
     'Visit Again',

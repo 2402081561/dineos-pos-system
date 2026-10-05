@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Button from '../../components/common/Button'
 import ConfirmationDialog from '../../components/common/ConfirmationDialog'
 import SectionHeading from '../../components/common/SectionHeading'
 import StatePanel from '../../components/common/StatePanel'
 import PaymentConfirmationDialog from '../../components/cashier/PaymentConfirmationDialog'
+import CashReceivedControl from '../../components/cashier/CashReceivedControl'
+import CashierOverview from '../../components/cashier/CashierOverview'
 import DiscountControl from '../../components/cashier/DiscountControl'
 import useAdminAuth from '../../hooks/useAdminAuth'
 import MemberLookup from '../../components/cashier/MemberLookup'
@@ -13,20 +15,10 @@ import useCashierTables from '../../hooks/useCashierTables'
 import { calculateTableDiscount } from '../../services/orderService'
 import { clearSupabaseCashierTable, completeSupabaseTablePayment } from '../../services/adminApiService'
 import { formatCurrency } from '../../utils/currency'
+import { cashierBillTotal, getCashPayment } from '../../utils/cashPayment'
 
 const paymentMethods = ['Cash', 'Credit/Debit Card', "Touch 'n Go", 'GrabPay', 'FPX', 'Other']
 
-function formatDateTime(value) {
-  const date = value?.toDate?.() ?? new Date(value)
-  return Number.isNaN(date.getTime())
-    ? 'Just now'
-    : new Intl.DateTimeFormat('en-MY', {
-        day: 'numeric',
-        month: 'short',
-        hour: 'numeric',
-        minute: '2-digit',
-      }).format(date)
-}
 
 function groupParticipants(orders) {
   return [
@@ -53,11 +45,13 @@ function groupParticipants(orders) {
 
 function CashierDashboard() {
   const { authUser: user } = useAdminAuth()
-  const { clearableTables, error, isLoading, tables } = useCashierTables()
+  const { clearableTables, error, floorTables, isLoading, setFloorTables, tables, summary, recentOrders } = useCashierTables()
   const [selectedTableNumber, setSelectedTableNumber] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('Cash')
   const [discount, setDiscount] = useState({ type: 'percentage', value: '0' })
-  const [isConfirming, setIsConfirming] = useState(false)
+  const [paymentConfirmation, setPaymentConfirmation] = useState(null)
+  const [cashReceived, setCashReceived] = useState('')
+  const paymentInFlight = useRef(false)
   const [isCompleting, setIsCompleting] = useState(false)
   const [paymentError, setPaymentError] = useState('')
   const [paymentSuccess, setPaymentSuccess] = useState(null)
@@ -97,9 +91,12 @@ function CashierDashboard() {
     }
   }, [discount, tableSubtotal])
   const previewGrandTotal = useMemo(() => {
-    const discountedSubtotal = Math.max(0, tableSubtotal - (discountPreview.value?.amount ?? 0))
-    return discountedSubtotal + discountedSubtotal * 0.1 + discountedSubtotal * 0.06
+    return cashierBillTotal(tableSubtotal, discountPreview.value?.amount ?? 0)
   }, [discountPreview.value?.amount, tableSubtotal])
+  const cashPayment = getCashPayment(previewGrandTotal, cashReceived)
+  const paymentLocked = isCompleting || Boolean(paymentConfirmation)
+  const currentOrderIds = (selectedTable?.orders ?? []).map((order) => order.id).sort().join(',')
+  const confirmationChanged = Boolean(paymentConfirmation && (paymentConfirmation.orderIds.join(',') !== currentOrderIds || paymentConfirmation.expectedAmount !== previewGrandTotal))
   const tablesReadyToClear = clearableTables.filter((table) => !clearedTableIds.includes(table.tableId))
 
   function openTable(table) {
@@ -107,37 +104,51 @@ function CashierDashboard() {
     setPaymentError('')
     setPaymentSuccess(null)
     setDiscount({ type: 'percentage', value: '0' })
+    setCashReceived('')
+    setPaymentConfirmation(null)
+  }
+
+  function confirmPayment() {
+    if (paymentLocked || !selectedTable || discountPreview.error || previewGrandTotal === null || (paymentMethod === 'Cash' && cashPayment.error)) return
+    setPaymentError('')
+    setPaymentConfirmation({
+      orderIds: selectedTable.orders.map((order) => order.id).sort(),
+      discount: { ...discount },
+      paymentMethod,
+      expectedAmount: previewGrandTotal,
+      ...(paymentMethod === 'Cash' ? { cashReceived: cashPayment.cashReceived, changeAmount: cashPayment.change } : {}),
+    })
   }
 
   async function completePayment() {
-    if (!selectedTable || !user?.id) return
-    if (discountPreview.error) {
-      setPaymentError(discountPreview.error)
-      setIsConfirming(false)
+    if (!selectedTable || !user?.id || !paymentConfirmation || paymentInFlight.current) return
+    if (discountPreview.error || confirmationChanged) {
+      setPaymentError(discountPreview.error || 'The bill has changed. Review it and confirm payment again.')
+      setPaymentConfirmation(null)
       return
     }
+    paymentInFlight.current = true
     try {
       setIsCompleting(true)
       setPaymentError('')
-      const paymentResult = await completeSupabaseTablePayment({
-        orderIds: selectedTable.orders.map((order) => order.id),
-        discount,
-        paymentMethod,
-      })
+      const paymentResult = await completeSupabaseTablePayment(paymentConfirmation)
       setPaymentSuccess({
         tableId: paymentResult.tableId,
-        method: paymentMethod,
+        method: paymentConfirmation.paymentMethod,
         paidTime: paymentResult.paidAt,
         receiptNumber: paymentResult.receiptNumber,
         total: paymentResult.amount,
         loyalty: paymentResult.loyalty,
+        cashReceived: paymentResult.cashReceived,
+        changeAmount: paymentResult.changeAmount,
       })
-      setIsConfirming(false)
+      setPaymentConfirmation(null)
     } catch (firebaseError) {
       console.error('[Cashier] Failed to complete payment:', firebaseError)
       setPaymentError(firebaseError.message || 'We could not complete this payment. Please try again.')
-      setIsConfirming(false)
+      setPaymentConfirmation(null)
     } finally {
+      paymentInFlight.current = false
       setIsCompleting(false)
     }
   }
@@ -188,7 +199,26 @@ function CashierDashboard() {
   if (!selectedTableNumber || (!selectedTable && !paymentSuccess)) {
     return (
       <div className="space-y-7">
-        <SectionHeading description="Served orders waiting for payment appear here automatically." eyebrow="Cashier POS" title="Payment queue" />
+        <SectionHeading description="Today’s payments and current table activity. Updates automatically." eyebrow="Cashier POS" title="Dashboard" />
+        <CashierOverview
+          summary={summary}
+          recentOrders={recentOrders}
+          clearableTables={tablesReadyToClear}
+          floorTables={floorTables}
+          onClearTable={(table) => {
+            setClearError('')
+            setClearingTable(table)
+          }}
+          onLayoutSaved={(positions) => {
+            const byId = new Map(positions.map((position) => [position.tableId, position]))
+            setFloorTables((current) => current.map((table) => {
+              const position = byId.get(table.id)
+              return position ? { ...table, floorX: position.x, floorY: position.y, floorZone: position.zone } : table
+            }))
+          }}
+          onOpenTable={openTable}
+          paymentTables={tables}
+        >
         <MemberLookup onMemberChange={setLookupMember} />
         {lookupMember && (
           <RewardRedemption
@@ -201,70 +231,11 @@ function CashierDashboard() {
             }
           />
         )}
+        </CashierOverview>
         {clearError && (
           <p aria-live="polite" className="rounded-2xl border border-red-100 bg-red-50 p-4 text-sm font-medium text-red-700">
             {clearError}
           </p>
-        )}
-        {tablesReadyToClear.length > 0 && (
-          <section>
-            <div className="mb-4">
-              <p className="eyebrow">Table turnover</p>
-              <h2 className="mt-1 text-xl font-extrabold text-slate-900">Ready to clear</h2>
-              <p className="mt-1 text-sm text-slate-500">These tables have no unpaid active orders.</p>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {tablesReadyToClear.map((table) => (
-                <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-5 shadow-sm" key={table.tableId}>
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Paid</p>
-                      <h3 className="mt-1 text-xl font-extrabold text-emerald-950">Table {table.tableNumber}</h3>
-                    </div>
-                    <Button
-                      onClick={() => {
-                        setClearError('')
-                        setClearingTable(table)
-                      }}
-                      variant="outline"
-                    >
-                      Clear table
-                    </Button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-        {tables.length === 0 && tablesReadyToClear.length === 0 ? (
-          <StatePanel description="All served tables have been paid, or there are no served orders yet." title="No tables awaiting payment." />
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {tables.map((table) => (
-              <button className="group rounded-3xl border border-slate-100 bg-white p-5 text-left shadow-[0_10px_28px_rgb(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-[0_16px_36px_rgb(15,23,42,0.11)] focus:outline-none focus:ring-2 focus:ring-orange-300" key={table.tableNumber} onClick={() => openTable(table)} type="button">
-                <div className="flex items-start justify-between gap-3">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-lg font-extrabold text-orange-600">{table.tableNumber}</span>
-                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700">Awaiting payment</span>
-                </div>
-                <h2 className="mt-5 text-xl font-extrabold text-slate-900">Table {table.tableNumber}</h2>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-slate-400">Customers</p>
-                    <p className="mt-1 font-bold text-slate-800">{table.customerCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-400">Served orders</p>
-                    <p className="mt-1 font-bold text-slate-800">{table.orders.length}</p>
-                  </div>
-                </div>
-                <div className="mt-5 border-t border-slate-100 pt-4">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Grand total</p>
-                  <p className="mt-1 text-2xl font-extrabold text-orange-600">{formatCurrency(table.grandTotal)}</p>
-                  <p className="mt-2 text-xs text-slate-400">Updated {formatDateTime(table.lastUpdatedAt)}</p>
-                </div>
-              </button>
-            ))}
-          </div>
         )}
         {clearTableDialog}
       </div>
@@ -316,8 +287,14 @@ function CashierDashboard() {
             <p className="mt-1 font-bold text-slate-800">{paymentSuccess.paidTime.toLocaleString('en-MY')}</p>
             <p className="mt-5 text-xs font-bold uppercase tracking-wide text-slate-400">Paid amount</p>
             <p className="mt-1 text-2xl font-extrabold text-orange-600">{formatCurrency(paymentSuccess.total)}</p>
+            {paymentSuccess.method === 'Cash' && paymentSuccess.cashReceived != null && (
+              <div className="mt-4 space-y-2 border-t border-slate-100 pt-4">
+                <p className="flex justify-between text-sm text-slate-600"><span>Cash received</span><span>{formatCurrency(paymentSuccess.cashReceived)}</span></p>
+                <p className="flex justify-between font-extrabold text-emerald-700"><span>Change</span><span>{formatCurrency(paymentSuccess.changeAmount)}</span></p>
+              </div>
+            )}
             <Link className="mt-6 inline-flex w-full" to={`/cashier/receipt/${encodeURIComponent(paymentSuccess.receiptNumber)}`}>
-              <Button className="w-full">View receipt</Button>
+              <Button className="w-full">View / print receipt</Button>
             </Link>
             {clearedTableIds.includes(paymentSuccess.tableId) ? (
               <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-center text-sm font-bold text-emerald-700">Table cleared and ready for the next customer.</p>
@@ -346,7 +323,7 @@ function CashierDashboard() {
     <div className="space-y-7">
       <SectionHeading
         action={
-          <Button onClick={() => setSelectedTableNumber('')} variant="outline">
+          <Button disabled={paymentLocked} onClick={() => setSelectedTableNumber('')} variant="outline">
             ← Payment queue
           </Button>
         }
@@ -409,34 +386,38 @@ function CashierDashboard() {
             <h2 className="mt-1 text-xl font-extrabold text-slate-900">Complete table payment</h2>
             <p className="mt-5 text-xs font-bold uppercase tracking-wide text-slate-400">Overall table total</p>
             <p className="mt-1 text-4xl font-extrabold tracking-tight text-orange-600">{formatCurrency(previewGrandTotal)}</p>
-            <DiscountControl disabled={isCompleting} discount={discount} error={discountPreview.error} onChange={setDiscount} preview={discountPreview.value} />
+            <DiscountControl disabled={paymentLocked} discount={discount} error={discountPreview.error} onChange={setDiscount} preview={discountPreview.value} />
             <div className="mt-6">
               <p className="text-sm font-bold text-slate-800">Payment method</p>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {paymentMethods.map((method) => (
-                  <button aria-pressed={paymentMethod === method} className={`rounded-xl px-3 py-3 text-left text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-orange-300 ${paymentMethod === method ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20' : 'bg-slate-50 text-slate-600 hover:bg-orange-50 hover:text-orange-700'}`} disabled={isCompleting} key={method} onClick={() => setPaymentMethod(method)} type="button">
+                  <button aria-pressed={paymentMethod === method} className={`rounded-xl px-3 py-3 text-left text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-orange-300 ${paymentMethod === method ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20' : 'bg-slate-50 text-slate-600 hover:bg-orange-50 hover:text-orange-700'}`} disabled={paymentLocked} key={method} onClick={() => { setPaymentMethod(method); setCashReceived(''); setPaymentError('') }} type="button">
                     {method}
                   </button>
                 ))}
               </div>
             </div>
+            {paymentMethod === 'Cash' && <CashReceivedControl disabled={paymentLocked} onChange={setCashReceived} payment={cashPayment} total={previewGrandTotal} value={cashReceived} />}
             {paymentError && <p className="mt-5 rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-medium text-red-700">{paymentError}</p>}
-            <Button className="mt-6 w-full py-3" disabled={Boolean(discountPreview.error)} onClick={() => setIsConfirming(true)}>
+            <Button className="mt-6 w-full py-3" disabled={paymentLocked || Boolean(discountPreview.error) || previewGrandTotal === null || (paymentMethod === 'Cash' && Boolean(cashPayment.error))} onClick={confirmPayment}>
               Complete payment
             </Button>
             <p className="mt-3 text-center text-xs leading-5 text-slate-400">This marks all unpaid served orders at Table {selectedTable.tableNumber} as paid.</p>
           </section>
         </aside>
       </div>
-      {isConfirming && (
+      {paymentConfirmation && (
         <PaymentConfirmationDialog
+          cashReceived={paymentConfirmation.cashReceived}
+          changeAmount={paymentConfirmation.changeAmount}
+          error={confirmationChanged ? 'The bill has changed. Cancel and review the updated bill.' : ''}
           isLoading={isCompleting}
-          method={paymentMethod}
+          method={paymentConfirmation.paymentMethod}
           onCancel={() => {
-            if (!isCompleting) setIsConfirming(false)
+            if (!isCompleting) setPaymentConfirmation(null)
           }}
           onConfirm={completePayment}
-          total={previewGrandTotal}
+          total={paymentConfirmation.expectedAmount}
         />
       )}
     </div>

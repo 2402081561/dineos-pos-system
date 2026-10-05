@@ -9,13 +9,19 @@ function timeValue(timestamp) {
 function useCashierTables() {
   const [orders, setOrders] = useState([])
   const [clearableTables, setClearableTables] = useState([])
+  const [floorTables, setFloorTables] = useState([])
+  const [summary, setSummary] = useState(null)
+  const [recentOrders, setRecentOrders] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => subscribeToSupabasePendingPayments(
-    ({ orders: pendingOrders, clearableTables: readyTables = [] }) => {
+    ({ orders: pendingOrders, clearableTables: readyTables = [], floorTables: currentFloorTables = [], summary: currentSummary = null, recentOrders: latestOrders = [] }) => {
+      setSummary(currentSummary)
+      setRecentOrders(latestOrders)
       setOrders(pendingOrders)
       setClearableTables(readyTables)
+      setFloorTables(currentFloorTables)
       setError('')
       setIsLoading(false)
     },
@@ -45,7 +51,7 @@ function useCashierTables() {
       .sort((first, second) => timeValue(second.lastUpdatedAt) - timeValue(first.lastUpdatedAt))
   }, [orders])
 
-  return { clearableTables, error, isLoading, orders, tables }
+  return { clearableTables, error, floorTables, isLoading, orders, setFloorTables, tables, summary, recentOrders }
 }
 
 export default useCashierTables
