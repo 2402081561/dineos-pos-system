@@ -2,6 +2,7 @@ import PortalLayout from '../components/common/PortalLayout'
 
 const navigation = [
   { label: 'Dashboard', to: '/admin/dashboard' },
+  { label: 'Cashier', to: '/cashier' },
   { label: 'Menu', to: '/admin/menu' },
   { label: 'Categories', to: '/admin/categories' },
   { label: 'Tables', to: '/admin/tables' },
