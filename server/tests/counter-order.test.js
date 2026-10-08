@@ -8,8 +8,9 @@ const menu = [{ id, name: 'Nasi Lemak', price: '8.90', isAvailable: true, catego
 
 test('counter order uses current menu price and existing service/SST rates', () => {
   assert.deepEqual(buildCounterOrder(cart, menu), {
-    items: [{ ...cart[0], id, name: 'Nasi Lemak', unitPrice: 8.9 }],
+    items: [{ ...cart[0], id, name: 'Nasi Lemak', unitPrice: 8.9, selections: [], optionSnapshot: [], extraPrice: 0 }],
     subtotal: 17.8, serviceCharge: 1.78, sst: 1.07, grandTotal: 20.65,
+    serviceChargeRate: 10, sstRate: 6,
   })
 })
 

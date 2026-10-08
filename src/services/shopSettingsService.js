@@ -10,6 +10,6 @@ export async function getShopSettings(signal) {
   return data.settings
 }
 
-export async function updateShopSettings(name, expectedName) {
-  return (await authenticatedApiRequest('/api/v1/admin/shop-settings', { method: 'PATCH', body: { name, expectedName } })).settings
+export async function updateShopSettings(settings, expectedRevision) {
+  return (await authenticatedApiRequest('/api/v1/admin/shop-settings', { method: 'PATCH', body: { name: settings.name, config: settings.config, expectedRevision } })).settings
 }

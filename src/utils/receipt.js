@@ -1,9 +1,10 @@
+import { receiptOrderTypeLabel } from '../../server/src/orderType.js'
 import { formatCurrency } from './currency.js'
 import { moneyToCents } from './cashPayment.js'
 
 export function getReceiptDetails(receipt) {
   const orders = receipt?.orders ?? []
-  const items = orders.flatMap((order) => order.items ?? [])
+  const items = orders.flatMap((order) => (order.items ?? []).map((item) => ({ ...item, orderType: item.orderType ?? (order.orderType === 'take_away' ? 'take_away' : 'dine_in') })))
   const receivedCents = moneyToCents(receipt?.cashReceived)
   const changeCents = moneyToCents(receipt?.changeAmount)
   const totalCents = moneyToCents(receipt?.grandTotal)
@@ -14,6 +15,7 @@ export function getReceiptDetails(receipt) {
     cashier: receipt?.cashierName || (receipt?.cashierId ? `Cashier ${String(receipt.cashierId).slice(0, 8).toUpperCase()}` : '—'),
     customers: [...new Set(orders.map((order) => order.customerNickname || 'Guest'))],
     items,
+    orderType: receiptOrderTypeLabel(orders),
     serviceCharge: orders.reduce((sum, order) => sum + (Number(order.serviceCharge) || 0), 0),
     sst: orders.reduce((sum, order) => sum + (Number(order.sst) || 0), 0),
     subtotal: orders.reduce((sum, order) => sum + (Number(order.subtotal) || 0), 0),
@@ -35,16 +37,17 @@ export function downloadReceiptPdf(receipt, shopName = 'DineOS') {
     `Receipt: ${receipt.receiptNumber}`,
     `Date: ${paidDate.toLocaleDateString('en-MY')} ${paidDate.toLocaleTimeString('en-MY')}`,
     `Table: ${receipt.tableNumber}`,
+    `Type: ${details.orderType}`,
     `Customer(s): ${details.customers.join(', ')}`,
     `Cashier: ${details.cashier}`,
     `Payment: ${receipt.paymentMethod}`,
     '----------------------------------------',
-    ...details.items.map((item) => `${item.quantity}x ${item.name}  ${formatCurrency((Number(item.price) || 0) * (Number(item.quantity) || 0))}`),
+    ...details.items.map((item) => `${item.quantity}x ${item.name}${item.orderType === 'take_away' ? ' [Take away]' : ''}  ${formatCurrency((Number(item.price) || 0) * (Number(item.quantity) || 0))}`),
     '----------------------------------------',
     `Subtotal: ${formatCurrency(details.subtotal)}`,
     ...(details.discount > 0 ? [`Discount: -${formatCurrency(details.discount)}`] : []),
-    `Service charge: ${formatCurrency(details.serviceCharge)}`,
-    `SST: ${formatCurrency(details.sst)}`,
+    ...(details.serviceCharge > 0 ? [`Service charge: ${formatCurrency(details.serviceCharge)}`] : []),
+    ...(details.sst > 0 ? [`SST: ${formatCurrency(details.sst)}`] : []),
     `Grand total: ${formatCurrency(receipt.grandTotal)}`,
     ...(details.cashTender ? [`Cash received: ${formatCurrency(details.cashTender.received)}`, `Change: ${formatCurrency(details.cashTender.change)}`] : []),
     '',

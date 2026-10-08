@@ -1,3 +1,5 @@
+import HandoffQueue from '../../components/staff/HandoffQueue'
+import TakeAwayQueue from '../../components/staff/TakeAwayQueue'
 import { Link } from 'react-router-dom'
 import SectionHeading from '../../components/common/SectionHeading'
 import StaffRequestQueue from '../../components/staff/StaffRequestQueue'
@@ -37,6 +39,8 @@ function Dashboard() {
       </div>
 
       {newRequests.length > 0 && <section aria-live="polite" className="rounded-2xl border border-orange-200 bg-orange-50 p-4 text-orange-950 shadow-sm"><p className="font-extrabold">🔔 New service request{newRequests.length === 1 ? '' : 's'} waiting</p><p className="mt-1 text-sm text-orange-900">{newRequests.map((request) => `Table ${request.tableNumber ?? '—'} · ${request.customerNickname || 'Guest'}`).join('  •  ')}</p></section>}
+
+      <HandoffQueue /><TakeAwayQueue />
 
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-3">

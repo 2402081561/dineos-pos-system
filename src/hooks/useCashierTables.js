@@ -10,13 +10,17 @@ function useCashierTables() {
   const [orders, setOrders] = useState([])
   const [clearableTables, setClearableTables] = useState([])
   const [floorTables, setFloorTables] = useState([])
+  const [floorPlan, setFloorPlan] = useState({ markers: [], revision: 0 })
   const [summary, setSummary] = useState(null)
   const [recentOrders, setRecentOrders] = useState([])
+  const [billRequests, setBillRequests] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => subscribeToSupabasePendingPayments(
-    ({ orders: pendingOrders, clearableTables: readyTables = [], floorTables: currentFloorTables = [], summary: currentSummary = null, recentOrders: latestOrders = [] }) => {
+    ({ orders: pendingOrders, clearableTables: readyTables = [], floorTables: currentFloorTables = [], floorPlan: currentFloorPlan = { markers: [], revision: 0 }, summary: currentSummary = null, recentOrders: latestOrders = [], billRequests: requests = [] }) => {
+      setFloorPlan(currentFloorPlan)
+      setBillRequests(requests)
       setSummary(currentSummary)
       setRecentOrders(latestOrders)
       setOrders(pendingOrders)
@@ -51,7 +55,7 @@ function useCashierTables() {
       .sort((first, second) => timeValue(second.lastUpdatedAt) - timeValue(first.lastUpdatedAt))
   }, [orders])
 
-  return { clearableTables, error, floorTables, isLoading, orders, setFloorTables, tables, summary, recentOrders }
+  return { clearableTables, error, floorTables, floorPlan, setFloorPlan, isLoading, orders, setFloorTables, tables, summary, recentOrders, billRequests }
 }
 
 export default useCashierTables

@@ -4,7 +4,8 @@ import KitchenOrderCard from '../../components/kitchen/KitchenOrderCard'
 import KitchenOrderSkeleton from '../../components/kitchen/KitchenOrderSkeleton'
 import useKitchenOrders from '../../hooks/useKitchenOrders'
 import { updateSupabaseKitchenOrderStatus } from '../../services/adminApiService'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { playKitchenAlert } from '../../utils/kitchenAlert'
 
 const soundPreferenceKey = 'dineos.kitchenAlertSoundEnabled'
 
@@ -24,7 +25,9 @@ function Dashboard() {
   const updatingOrderIdsRef = useRef(new Set())
   const isMountedRef = useRef(true)
   const audioContextRef = useRef(null)
-  const alertOscillatorRef = useRef(null)
+  const alertSoundRef = useRef(null)
+  const playbackGenerationRef = useRef(0)
+  const [soundError, setSoundError] = useState('')
   const soundEnabledRef = useRef(readSoundPreference())
   const lastSoundAlertKeyRef = useRef('')
   const [soundEnabled, setSoundEnabled] = useState(readSoundPreference)
@@ -40,84 +43,60 @@ function Dashboard() {
   }, [])
 
   useEffect(() => () => {
+    ++playbackGenerationRef.current
+    alertSoundRef.current?.stop()
     audioContextRef.current?.close?.().catch(() => {})
+    audioContextRef.current = null
+  }, [])
+
+  const playAlert = useCallback(async (preview = false) => {
+    const generation = ++playbackGenerationRef.current
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      if (!AudioContext) throw new Error('This browser does not support audio.')
+      const context = audioContextRef.current ?? new AudioContext()
+      audioContextRef.current = context
+      if (context.state === 'suspended') await context.resume()
+      if (!isMountedRef.current || generation !== playbackGenerationRef.current || (!preview && !soundEnabledRef.current)) return
+      alertSoundRef.current?.stop()
+      alertSoundRef.current = playKitchenAlert(context)
+      setSoundError('')
+    } catch {
+      if (isMountedRef.current && generation === playbackGenerationRef.current) setSoundError('Could not play the alert. Click Test sound and check your device volume / mute setting.')
+    }
   }, [])
 
   useEffect(() => {
     const alertKey = newOrders.map((order) => order.id).sort().join(',')
     if (!soundEnabled || !alertKey || lastSoundAlertKeyRef.current === alertKey) return
     lastSoundAlertKeyRef.current = alertKey
-    try {
-      const AudioContext = window.AudioContext || window.webkitAudioContext
-      if (!AudioContext) return
-      const context = audioContextRef.current ?? new AudioContext()
-      audioContextRef.current = context
-      const playTone = () => {
-        if (!isMountedRef.current || !soundEnabledRef.current) return
-        alertOscillatorRef.current?.stop()
-        const oscillator = context.createOscillator()
-        const gain = context.createGain()
-        const startTime = context.currentTime
-        // Two doorbell-style chimes with a natural decay, not sustained alarm beeps.
-        oscillator.type = 'sine'
-        gain.gain.setValueAtTime(0, startTime)
-        const notes = [
-          { offset: 0, frequency: 783.99, duration: 0.42 },
-          { offset: 0.45, frequency: 659.25, duration: 1.05 },
-          { offset: 1.5, frequency: 783.99, duration: 0.42 },
-          { offset: 1.95, frequency: 659.25, duration: 1.05 },
-        ]
-        for (const note of notes) {
-          const noteStart = startTime + note.offset
-          oscillator.frequency.setValueAtTime(note.frequency, noteStart)
-          gain.gain.setValueAtTime(0, noteStart)
-          gain.gain.linearRampToValueAtTime(0.6, noteStart + 0.008)
-          gain.gain.exponentialRampToValueAtTime(0.001, noteStart + note.duration - 0.02)
-          gain.gain.linearRampToValueAtTime(0, noteStart + note.duration)
-        }
-        oscillator.connect(gain)
-        gain.connect(context.destination)
-        alertOscillatorRef.current = oscillator
-        oscillator.onended = () => {
-          oscillator.disconnect()
-          gain.disconnect()
-          if (alertOscillatorRef.current === oscillator) alertOscillatorRef.current = null
-        }
-        oscillator.start(startTime)
-        oscillator.stop(startTime + 3)
-      }
-      if (context.state === 'suspended') context.resume().then(playTone).catch(() => {})
-      else playTone()
-    } catch { /* Sound is optional; the visual alert remains available. */ }
-  }, [newOrders, soundEnabled])
+    void playAlert()
+  }, [newOrders, soundEnabled, playAlert])
 
   function toggleSound() {
     const nextEnabled = !soundEnabled
     soundEnabledRef.current = nextEnabled
-    if (!nextEnabled) alertOscillatorRef.current?.stop()
-    else {
-      // Unlock audio on the button click so browser autoplay rules allow later alerts.
-      try {
-        const AudioContext = window.AudioContext || window.webkitAudioContext
-        if (AudioContext) {
-          const context = audioContextRef.current ?? new AudioContext()
-          audioContextRef.current = context
-          context.resume().catch(() => {})
-        }
-      } catch { /* The visual alert still works when audio is unavailable. */ }
+    if (!nextEnabled) {
+      ++playbackGenerationRef.current
+      alertSoundRef.current?.stop()
+      lastSoundAlertKeyRef.current = ''
+    } else {
+      // Preview also unlocks audio in this user gesture for subsequent orders.
+      lastSoundAlertKeyRef.current = newOrders.map((order) => order.id).sort().join(',')
+      void playAlert()
     }
     setSoundEnabled(nextEnabled)
     try { localStorage.setItem(soundPreferenceKey, String(nextEnabled)) } catch { /* Sound preference is optional UX state. */ }
   }
 
-  async function handleUpdateStatus(orderId, status, expectedStatus) {
+  async function handleUpdateStatus(orderId, status, expectedStatus, expectedVersion) {
     if (updatingOrderIdsRef.current.has(orderId)) return
 
     try {
       updatingOrderIdsRef.current.add(orderId)
       setUpdatingOrderIds(new Set(updatingOrderIdsRef.current))
       setUpdateError('')
-      await updateSupabaseKitchenOrderStatus(orderId, status, expectedStatus)
+      await updateSupabaseKitchenOrderStatus(orderId, status, expectedStatus, expectedVersion)
       await refresh()
     } catch (apiError) {
       console.error('[Kitchen Dashboard] Failed to update order status:', apiError)
@@ -132,7 +111,7 @@ function Dashboard() {
     }
   }
 
-  return <div className="space-y-7"><SectionHeading action={<button aria-pressed={soundEnabled} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition hover:border-orange-200 hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-orange-300" onClick={toggleSound} type="button">{soundEnabled ? '🔔 Sound on' : '🔕 Sound off'}</button>} eyebrow="Kitchen command centre" title="Incoming orders" description="Keep every table moving with a clear, live kitchen queue." />{newOrders.length > 0 && <section aria-live="polite" className="rounded-2xl border border-orange-200 bg-orange-50 p-4 text-orange-950 shadow-sm"><p className="font-extrabold">🔔 New order{newOrders.length === 1 ? '' : 's'} waiting</p><p className="mt-1 text-sm text-orange-900">{newOrders.map((order) => `Table ${order.tableNumber ?? order.tableId ?? '—'} · ${orderLabel(order)}`).join('  •  ')}</p></section>}{updateError && <StatePanel description={updateError} title="Order update failed" tone="error" />}{isLoading ? <div className="grid gap-5 lg:grid-cols-3">{Array.from({ length: 3 }, (_, index) => <KitchenOrderSkeleton key={index} />)}</div> : error ? <StatePanel description={error} title="Kitchen orders unavailable" tone="error" /> : orders.length === 0 ? <StatePanel description="New customer orders will appear here automatically." title="No active kitchen orders." /> : <div className="grid gap-5 lg:grid-cols-3">{orders.map((order) => <KitchenOrderCard isNewOrder={newOrderIds.has(order.id)} isUpdating={updatingOrderIds.has(order.id)} key={order.id} now={currentTime} onUpdateStatus={handleUpdateStatus} order={order} />)}</div>}</div>
+  return <div className="space-y-7"><SectionHeading action={<div className="flex flex-wrap gap-2"><button className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-bold text-orange-700 hover:bg-orange-100" onClick={() => void playAlert(true)} type="button">▶ Test sound</button><button aria-pressed={soundEnabled} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition hover:border-orange-200 hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-orange-300" onClick={toggleSound} type="button">{soundEnabled ? '🔔 Sound on' : '🔕 Sound off'}</button></div>} eyebrow="Kitchen command centre" title="Incoming orders" description="Keep every table moving with a clear, live kitchen queue." />{soundError && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{soundError}</p>}{newOrders.length > 0 && <section aria-live="polite" className="rounded-2xl border border-orange-200 bg-orange-50 p-4 text-orange-950 shadow-sm"><p className="font-extrabold">🔔 New order{newOrders.length === 1 ? '' : 's'} waiting</p><p className="mt-1 text-sm text-orange-900">{newOrders.map((order) => `Table ${order.tableNumber ?? order.tableId ?? '—'} · ${orderLabel(order)}${order.orderType === 'take_away' ? ' · TAKE AWAY' : ''}`).join('  •  ')}</p></section>}{updateError && <StatePanel description={updateError} title="Order update failed" tone="error" />}{isLoading ? <div className="grid gap-5 lg:grid-cols-3">{Array.from({ length: 3 }, (_, index) => <KitchenOrderSkeleton key={index} />)}</div> : error ? <StatePanel description={error} title="Kitchen orders unavailable" tone="error" /> : orders.length === 0 ? <StatePanel description="New customer orders will appear here automatically." title="No active kitchen orders." /> : <div className="grid gap-5 lg:grid-cols-3">{orders.map((order) => <KitchenOrderCard isNewOrder={newOrderIds.has(order.id)} isUpdating={updatingOrderIds.has(order.id)} key={order.id} now={currentTime} onUpdateStatus={handleUpdateStatus} order={order} />)}</div>}</div>
 }
 
 export default Dashboard

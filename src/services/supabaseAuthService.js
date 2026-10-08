@@ -72,7 +72,11 @@ export async function authenticatedApiRequest(path, { body, method = 'GET', head
     }
   }
 
-  if (!result.response.ok) throw new Error(result.data.error || 'The server could not complete this request.')
+  if (!result.response.ok) {
+    const error = new Error(result.data.error || 'The server could not complete this request.')
+    error.status = result.response.status
+    throw error
+  }
   return result.data
 }
 

@@ -1,11 +1,11 @@
+import OrderTypeBadge from '../../components/common/OrderTypeBadge'
 import { useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import Button from '../../components/common/Button'
 import ConfirmationDialog from '../../components/common/ConfirmationDialog'
-import SectionHeading from '../../components/common/SectionHeading'
 import StatePanel from '../../components/common/StatePanel'
 import PaymentConfirmationDialog from '../../components/cashier/PaymentConfirmationDialog'
 import CashReceivedControl from '../../components/cashier/CashReceivedControl'
+import PaymentSuccessPanel from '../../components/cashier/PaymentSuccessPanel'
 import CashierOverview from '../../components/cashier/CashierOverview'
 import DiscountControl from '../../components/cashier/DiscountControl'
 import useAdminAuth from '../../hooks/useAdminAuth'
@@ -15,7 +15,9 @@ import useCashierTables from '../../hooks/useCashierTables'
 import { calculateTableDiscount } from '../../services/orderService'
 import { clearSupabaseCashierTable, completeSupabaseTablePayment } from '../../services/adminApiService'
 import { formatCurrency } from '../../utils/currency'
-import { cashierBillTotal, getCashPayment } from '../../utils/cashPayment'
+import { getCashPayment } from '../../utils/cashPayment'
+import { paymentPlan, selectPaymentOrders } from '../../../server/src/paymentSelection'
+import OptionSummary from '../../components/common/OptionSummary'
 
 const paymentMethods = ['Cash', 'Credit/Debit Card', "Touch 'n Go", 'GrabPay', 'FPX', 'Other']
 
@@ -45,8 +47,10 @@ function groupParticipants(orders) {
 
 function CashierDashboard() {
   const { authUser: user } = useAdminAuth()
-  const { clearableTables, error, floorTables, isLoading, setFloorTables, tables, summary, recentOrders } = useCashierTables()
+  const { clearableTables, error, floorTables, floorPlan, setFloorPlan, isLoading, setFloorTables, tables, summary, recentOrders, billRequests } = useCashierTables()
   const [selectedTableNumber, setSelectedTableNumber] = useState('')
+  const [quantities, setQuantities] = useState({})
+  const [splitPayment, setSplitPayment] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState('Cash')
   const [discount, setDiscount] = useState({ type: 'percentage', value: '0' })
   const [paymentConfirmation, setPaymentConfirmation] = useState(null)
@@ -54,6 +58,7 @@ function CashierDashboard() {
   const paymentInFlight = useRef(false)
   const [isCompleting, setIsCompleting] = useState(false)
   const [paymentError, setPaymentError] = useState('')
+  const [canRetryPayment, setCanRetryPayment] = useState(false)
   const [paymentSuccess, setPaymentSuccess] = useState(null)
   const [lookupMember, setLookupMember] = useState(null)
   const [clearingTable, setClearingTable] = useState(null)
@@ -61,22 +66,24 @@ function CashierDashboard() {
   const [isClearing, setIsClearing] = useState(false)
   const [clearError, setClearError] = useState('')
 
-  const selectedTable = tables.find((table) => table.tableNumber === selectedTableNumber)
+  const selectedTable = tables.find((table) => table.tableNumber === selectedTableNumber) ?? paymentConfirmation?.tableSnapshot
+  const selections = useMemo(() => (selectedTable?.orders ?? []).flatMap((order) => order.items.map((item) => ({ itemId: item.id, quantity: quantities[item.id] ?? Number(item.quantity) - Number(item.paidQuantity ?? 0) }))).filter((item) => item.quantity !== 0), [selectedTable?.orders, quantities])
+  const selectedOrders = useMemo(() => { try { return selectPaymentOrders(selectedTable?.orders ?? [], selections) } catch { return [] } }, [selectedTable?.orders, selections])
   const associatedMemberIds = useMemo(
     () => [
       ...new Set(
-        (selectedTable?.orders ?? []).map((order) =>
+        selectedOrders.map((order) =>
           String(order.memberId ?? '')
             .trim()
             .toUpperCase(),
         ),
       ),
     ],
-    [selectedTable?.orders],
+    [selectedOrders],
   )
   const associatedMemberId = associatedMemberIds.length === 1 && associatedMemberIds[0] ? associatedMemberIds[0] : ''
   const billParticipants = useMemo(() => groupParticipants(selectedTable?.orders ?? []), [selectedTable?.orders])
-  const tableSubtotal = useMemo(() => (selectedTable?.orders ?? []).reduce((sum, order) => sum + Math.max(0, Number(order.subtotal) || 0), 0), [selectedTable?.orders])
+  const tableSubtotal = useMemo(() => selectedOrders.reduce((sum, order) => sum + order.subtotal, 0), [selectedOrders])
   const discountPreview = useMemo(() => {
     try {
       return {
@@ -91,8 +98,9 @@ function CashierDashboard() {
     }
   }, [discount, tableSubtotal])
   const previewGrandTotal = useMemo(() => {
-    return cashierBillTotal(tableSubtotal, discountPreview.value?.amount ?? 0)
-  }, [discountPreview.value?.amount, tableSubtotal])
+    try { return paymentPlan(selectedTable?.orders ?? [], selections, discountPreview.value?.amount ?? 0).grandTotal }
+    catch { return null }
+  }, [discountPreview.value?.amount, selectedTable?.orders, selections])
   const cashPayment = getCashPayment(previewGrandTotal, cashReceived)
   const paymentLocked = isCompleting || Boolean(paymentConfirmation)
   const currentOrderIds = (selectedTable?.orders ?? []).map((order) => order.id).sort().join(',')
@@ -100,6 +108,8 @@ function CashierDashboard() {
   const tablesReadyToClear = clearableTables.filter((table) => !clearedTableIds.includes(table.tableId))
 
   function openTable(table) {
+    setQuantities({})
+    setSplitPayment(false)
     setSelectedTableNumber(table.tableNumber)
     setPaymentError('')
     setPaymentSuccess(null)
@@ -111,7 +121,12 @@ function CashierDashboard() {
   function confirmPayment() {
     if (paymentLocked || !selectedTable || discountPreview.error || previewGrandTotal === null || (paymentMethod === 'Cash' && cashPayment.error)) return
     setPaymentError('')
+    setCanRetryPayment(false)
     setPaymentConfirmation({
+      tableSnapshot: selectedTable,
+      requestId: crypto.randomUUID(),
+      selections,
+      versions: Object.fromEntries(selectedTable.orders.map((order) => [order.id, order.version])),
       orderIds: selectedTable.orders.map((order) => order.id).sort(),
       discount: { ...discount },
       paymentMethod,
@@ -122,7 +137,7 @@ function CashierDashboard() {
 
   async function completePayment() {
     if (!selectedTable || !user?.id || !paymentConfirmation || paymentInFlight.current) return
-    if (discountPreview.error || confirmationChanged) {
+    if (discountPreview.error && !canRetryPayment) {
       setPaymentError(discountPreview.error || 'The bill has changed. Review it and confirm payment again.')
       setPaymentConfirmation(null)
       return
@@ -146,7 +161,7 @@ function CashierDashboard() {
     } catch (firebaseError) {
       console.error('[Cashier] Failed to complete payment:', firebaseError)
       setPaymentError(firebaseError.message || 'We could not complete this payment. Please try again.')
-      setPaymentConfirmation(null)
+      setCanRetryPayment(!firebaseError.status || firebaseError.status >= 500)
     } finally {
       paymentInFlight.current = false
       setIsCompleting(false)
@@ -194,26 +209,29 @@ function CashierDashboard() {
         </div>
       </div>
     )
-  if (error) return <StatePanel description={error} title="Cashier queue unavailable" tone="error" />
+  if (error && !paymentConfirmation) return <StatePanel description={error} title="Cashier queue unavailable" tone="error" />
 
   if (!selectedTableNumber || (!selectedTable && !paymentSuccess)) {
     return (
       <div className="space-y-7">
-        <SectionHeading description="Today’s payments and current table activity. Updates automatically." eyebrow="Cashier POS" title="Dashboard" />
+        <header className="flex items-center justify-between gap-3"><h1 className="text-2xl font-bold text-slate-900">Cashier</h1><span className="text-xs text-slate-500">Updates automatically</span></header>
         <CashierOverview
+          billRequests={billRequests}
           summary={summary}
           recentOrders={recentOrders}
           clearableTables={tablesReadyToClear}
           floorTables={floorTables}
+          floorPlan={floorPlan}
           onClearTable={(table) => {
             setClearError('')
             setClearingTable(table)
           }}
-          onLayoutSaved={(positions) => {
+          onLayoutSaved={(positions, savedPlan) => {
+            if (savedPlan) setFloorPlan(savedPlan)
             const byId = new Map(positions.map((position) => [position.tableId, position]))
             setFloorTables((current) => current.map((table) => {
               const position = byId.get(table.id)
-              return position ? { ...table, floorX: position.x, floorY: position.y, floorZone: position.zone } : table
+              return position ? { ...table, floorX: position.x, floorY: position.y, floorZone: position.zone, floorStyle: position.style, floorPoint: position.point } : table
             }))
           }}
           onOpenTable={openTable}
@@ -244,95 +262,31 @@ function CashierDashboard() {
 
   if (paymentSuccess)
     return (
-      <div className="mx-auto max-w-2xl space-y-6">
-        <SectionHeading
-          action={
-            <Button
-              onClick={() => {
-                setPaymentSuccess(null)
-                setSelectedTableNumber('')
-              }}
-              variant="outline"
-            >
-              Back to payment queue
-            </Button>
-          }
-          description="The table has been removed from the active payment queue."
-          eyebrow="Cashier POS"
-          title="Payment successful"
-        />
-        <section className="rounded-3xl border border-emerald-100 bg-emerald-50 p-7 text-center shadow-sm">
-          <p className="text-5xl">✓</p>
-          <h2 className="mt-4 text-3xl font-extrabold text-emerald-900">Payment Successful</h2>
-          <p className="mt-2 text-sm text-emerald-800">Table {selectedTableNumber} has been marked as paid.</p>
-          {clearError && (
-            <p aria-live="polite" className="mx-auto mt-5 max-w-sm rounded-2xl border border-red-100 bg-red-50 p-4 text-left text-sm font-medium text-red-700">
-              {clearError}
-            </p>
-          )}
-          {paymentSuccess.loyalty?.points > 0 && (
-            <div className="mx-auto mt-5 max-w-sm rounded-2xl border border-orange-100 bg-orange-50 p-4 text-left">
-              <p className="font-bold text-orange-900">
-                {paymentSuccess.loyalty.memberName} earned {paymentSuccess.loyalty.points} points.
-              </p>
-              <p className="mt-1 text-sm text-orange-800">Current balance: {paymentSuccess.loyalty.pointsBalance} points</p>
-            </div>
-          )}
-          <div className="mx-auto mt-7 max-w-sm rounded-2xl bg-white p-5 text-left shadow-sm">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Receipt number</p>
-            <p className="mt-1 text-xl font-extrabold text-slate-900">{paymentSuccess.receiptNumber}</p>
-            <p className="mt-5 text-xs font-bold uppercase tracking-wide text-slate-400">Payment method</p>
-            <p className="mt-1 font-bold text-slate-800">{paymentSuccess.method}</p>
-            <p className="mt-5 text-xs font-bold uppercase tracking-wide text-slate-400">Paid time</p>
-            <p className="mt-1 font-bold text-slate-800">{paymentSuccess.paidTime.toLocaleString('en-MY')}</p>
-            <p className="mt-5 text-xs font-bold uppercase tracking-wide text-slate-400">Paid amount</p>
-            <p className="mt-1 text-2xl font-extrabold text-orange-600">{formatCurrency(paymentSuccess.total)}</p>
-            {paymentSuccess.method === 'Cash' && paymentSuccess.cashReceived != null && (
-              <div className="mt-4 space-y-2 border-t border-slate-100 pt-4">
-                <p className="flex justify-between text-sm text-slate-600"><span>Cash received</span><span>{formatCurrency(paymentSuccess.cashReceived)}</span></p>
-                <p className="flex justify-between font-extrabold text-emerald-700"><span>Change</span><span>{formatCurrency(paymentSuccess.changeAmount)}</span></p>
-              </div>
-            )}
-            <Link className="mt-6 inline-flex w-full" to={`/cashier/receipt/${encodeURIComponent(paymentSuccess.receiptNumber)}`}>
-              <Button className="w-full">View / print receipt</Button>
-            </Link>
-            {clearedTableIds.includes(paymentSuccess.tableId) ? (
-              <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-center text-sm font-bold text-emerald-700">Table cleared and ready for the next customer.</p>
-            ) : (
-              <Button
-                className="mt-3 w-full"
-                onClick={() => {
-                  setClearError('')
-                  setClearingTable({
-                    tableId: paymentSuccess.tableId,
-                    tableNumber: selectedTableNumber,
-                  })
-                }}
-                variant="outline"
-              >
-                Clear Table {selectedTableNumber}
-              </Button>
-            )}
-          </div>
-        </section>
+      <div>
+        <PaymentSuccessPanel payment={paymentSuccess} tableNumber={selectedTableNumber} canClear={tablesReadyToClear.some((table) => table.tableId === paymentSuccess.tableId)} cleared={clearedTableIds.includes(paymentSuccess.tableId)} isClearing={isClearing} error={clearError} onBack={() => { setPaymentSuccess(null); setSelectedTableNumber('') }} onClear={() => {
+          setClearError('')
+          setClearingTable({ tableId: paymentSuccess.tableId, tableNumber: selectedTableNumber })
+        }} />
         {clearTableDialog}
       </div>
     )
 
   return (
     <div className="space-y-7">
-      <SectionHeading
-        action={
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-slate-900">Table {selectedTable.tableNumber} · Payment</h1>
           <Button disabled={paymentLocked} onClick={() => setSelectedTableNumber('')} variant="outline">
-            ← Payment queue
+            ← Tables
           </Button>
-        }
-        description="Review all served orders before completing this table's payment."
-        eyebrow="Cashier POS"
-        title={`Table ${selectedTable.tableNumber} bill`}
-      />
+      </header>
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="space-y-5">
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold">Unpaid items</h2><div className="flex gap-1 rounded-lg bg-slate-100 p-1" role="group" aria-label="Payment scope">{[[false, 'Whole table'], [true, 'Split bill']].map(([split, label]) => <button key={label} type="button" disabled={paymentLocked} aria-pressed={splitPayment === split} onClick={() => { setSplitPayment(split); setQuantities({}) }} className={`rounded-md px-3 py-2 text-sm font-semibold ${splitPayment === split ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600'}`}>{label}</button>)}</div></div>
+            {splitPayment && <><p className="text-sm text-slate-500">Choose quantities to pay now. Remaining items stay unpaid.</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={paymentLocked} onClick={() => setQuantities({})}>Select all</Button><Button variant="outline" disabled={paymentLocked} onClick={() => setQuantities(Object.fromEntries(selectedTable.orders.flatMap((order) => order.items.map((item) => [item.id, 0]))))}>Clear selection</Button></div></>}
+            {selectedTable.orders.flatMap((order) => order.items.map((item) => ({ ...item, orderNumber: order.orderNumber }))).filter((item) => item.quantity > (item.paidQuantity ?? 0)).map((item) => <div key={item.id} className="flex items-center justify-between gap-3 border-t border-slate-100 py-3"><span className="min-w-0"><strong className="block text-sm">{item.quantity - (item.paidQuantity ?? 0)}× {item.name}</strong><OrderTypeBadge orderType={item.orderType} /><OptionSummary item={item} />{item.notes && <span className="block text-xs text-slate-500">{item.notes}</span>}<span className="mt-1 block text-xs text-slate-500">{item.orderNumber} · {formatCurrency(item.price)} each</span></span>{splitPayment ? <input aria-label={`Pay quantity: ${item.name}`} className="w-20 rounded-lg border p-2" type="number" min="0" max={item.quantity - (item.paidQuantity ?? 0)} step="1" disabled={paymentLocked} value={quantities[item.id] ?? item.quantity - (item.paidQuantity ?? 0)} onChange={(event) => setQuantities((current) => ({ ...current, [item.id]: Number(event.target.value) }))} /> : <strong className="whitespace-nowrap text-sm">{formatCurrency(Number(item.price) * (item.quantity - (item.paidQuantity ?? 0)))}</strong>}</div>)}
+          </div>
+          <details className="space-y-3"><summary className="cursor-pointer rounded-xl border bg-white p-4 font-bold">All remaining table items / charge breakdown</summary>
           {billParticipants.map((participant, participantIndex) => (
             <article className="overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-sm" key={`${participant.customerNickname}-${participantIndex}`}>
               <div className="flex items-center justify-between gap-4 border-b border-slate-100 p-5">
@@ -344,14 +298,14 @@ function CashierDashboard() {
               </div>
               <div className="divide-y divide-slate-100">
                 {participant.orders
-                  .flatMap((order) => order.items ?? [])
+                  .flatMap((order) => (order.items ?? []).map((item) => ({ ...item, quantity: item.quantity - (item.paidQuantity ?? 0), orderType: item.orderType ?? order.orderType ?? 'dine_in' }))).filter((item) => item.quantity > 0)
                   .map((item, index) => (
                     <div className="flex items-start justify-between gap-4 p-4" key={`${item.menuItemId}-${index}`}>
                       <div>
                         <p className="font-semibold text-slate-800">
                           {item.quantity}× {item.name}
                         </p>
-                        {item.notes && <p className="mt-1 text-xs text-slate-500">Note: {item.notes}</p>}
+                        <OptionSummary item={item} />{item.notes && <p className="mt-1 text-xs text-slate-500">Note: {item.notes}</p>}
                       </div>
                       <p className="whitespace-nowrap font-bold text-slate-700">{formatCurrency((Number(item.price) || 0) * (Number(item.quantity) || 0))}</p>
                     </div>
@@ -377,21 +331,21 @@ function CashierDashboard() {
               </div>
             </article>
           ))}
+          </details>
         </section>
         <aside className="h-fit space-y-5 xl:sticky xl:top-24">
-          <MemberLookup associatedMemberId={associatedMemberId} />
+          <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-bold">Member / loyalty {associatedMemberId && <span className="font-normal text-slate-500">· {associatedMemberId}</span>}</summary><div className="mt-3"><MemberLookup associatedMemberId={associatedMemberId} /></div></details>
           {associatedMemberIds.length !== 1 && <p className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-800">This payment has mixed member/guest orders, so no loyalty points will be awarded.</p>}
-          <section className="rounded-3xl border border-orange-100 bg-white p-5 shadow-[0_14px_34px_rgb(15,23,42,0.07)]">
-            <p className="eyebrow">Payment</p>
-            <h2 className="mt-1 text-xl font-extrabold text-slate-900">Complete table payment</h2>
-            <p className="mt-5 text-xs font-bold uppercase tracking-wide text-slate-400">Overall table total</p>
+          <section className="rounded-xl border border-slate-200 bg-white p-5">
+            <p className="text-sm font-semibold text-slate-500">Amount to collect</p>
             <p className="mt-1 text-4xl font-extrabold tracking-tight text-orange-600">{formatCurrency(previewGrandTotal)}</p>
-            <DiscountControl disabled={paymentLocked} discount={discount} error={discountPreview.error} onChange={setDiscount} preview={discountPreview.value} />
+            <details className="mt-4 border-y border-slate-100 py-3"><summary className="cursor-pointer text-sm font-semibold">Discount {discountPreview.value?.amount > 0 && <span className="text-orange-600">−{formatCurrency(discountPreview.value.amount)}</span>}</summary><DiscountControl disabled={paymentLocked} discount={discount} error={discountPreview.error} onChange={setDiscount} preview={discountPreview.value} /></details>
+            {discountPreview.error && <p role="alert" className="mt-2 text-sm text-red-700">{discountPreview.error}</p>}
             <div className="mt-6">
               <p className="text-sm font-bold text-slate-800">Payment method</p>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {paymentMethods.map((method) => (
-                  <button aria-pressed={paymentMethod === method} className={`rounded-xl px-3 py-3 text-left text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-orange-300 ${paymentMethod === method ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20' : 'bg-slate-50 text-slate-600 hover:bg-orange-50 hover:text-orange-700'}`} disabled={paymentLocked} key={method} onClick={() => { setPaymentMethod(method); setCashReceived(''); setPaymentError('') }} type="button">
+                  <button aria-pressed={paymentMethod === method} className={`rounded-lg border px-3 py-3 text-left text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-orange-300 ${paymentMethod === method ? 'border-orange-500 bg-orange-50 text-orange-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`} disabled={paymentLocked} key={method} onClick={() => { setPaymentMethod(method); setCashReceived(''); setPaymentError('') }} type="button">
                     {method}
                   </button>
                 ))}
@@ -402,15 +356,16 @@ function CashierDashboard() {
             <Button className="mt-6 w-full py-3" disabled={paymentLocked || Boolean(discountPreview.error) || previewGrandTotal === null || (paymentMethod === 'Cash' && Boolean(cashPayment.error))} onClick={confirmPayment}>
               Complete payment
             </Button>
-            <p className="mt-3 text-center text-xs leading-5 text-slate-400">This marks all unpaid served orders at Table {selectedTable.tableNumber} as paid.</p>
+            <p className="mt-3 text-center text-xs leading-5 text-slate-400">Only the selected quantities are paid. This does not mark food as served or collected.</p>
           </section>
         </aside>
       </div>
       {paymentConfirmation && (
         <PaymentConfirmationDialog
+          canRetry={canRetryPayment}
           cashReceived={paymentConfirmation.cashReceived}
           changeAmount={paymentConfirmation.changeAmount}
-          error={confirmationChanged ? 'The bill has changed. Cancel and review the updated bill.' : ''}
+          error={paymentError || (confirmationChanged ? 'The bill has changed. Cancel and review the updated bill.' : '')}
           isLoading={isCompleting}
           method={paymentConfirmation.paymentMethod}
           onCancel={() => {

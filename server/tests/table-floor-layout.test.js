@@ -4,6 +4,8 @@ import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { FloorLayoutConflictError, FloorLayoutValidationError, validateFloorLayoutUpdate } from '../src/tableFloorLayout.js'
 import { moveTableOnFloor, moveTableToZone, placeTablesOnFloor } from '../../src/utils/tableFloorLayout.js'
+import { DEFAULT_TABLE_STYLE } from '../src/tableAppearance.js'
+import { validateFreePlan } from '../src/freeFloorLayout.js'
 
 const tables = [
   { id: 'a', tableNumber: 2, floorX: null, floorY: null },
@@ -44,7 +46,7 @@ test('server accepts a complete position-only layout', () => {
     { tableId: 'a', x: 0, y: 0, expectedX: null, expectedY: null },
     { tableId: 'b', x: 2, y: 0, expectedX: 2, expectedY: 0 },
   ]
-  assert.deepEqual(validateFloorLayoutUpdate({ positions }, tables), positions.map(({ tableId, x, y }) => ({ tableId, x, y, zone: 'Main hall' })))
+  assert.deepEqual(validateFloorLayoutUpdate({ positions }, tables), positions.map(({ tableId, x, y }) => ({ tableId, x, y, zone: 'Main hall', style: DEFAULT_TABLE_STYLE })))
 })
 
 const source = await readFile(new URL('../src/index.js', import.meta.url), 'utf8')
@@ -58,6 +60,8 @@ async function layoutRequest(positions) {
     async query(sql, values) {
       queries.push({ sql, values })
       if (sql.includes('FROM restaurant_tables ORDER BY id FOR UPDATE')) return { rows: tables.map(({ id, floorX, floorY }) => ({ id, floorX, floorY })) }
+      if (sql.includes('FROM floor_plan_settings')) return { rows: [{ markers: [], revision: 0 }] }
+      if (sql.includes('UPDATE floor_plan_settings')) return { rows: [{ markers: JSON.parse(values[0]), revision: 1 }] }
       return { rows: [] }
     },
     release() { queries.push({ sql: 'RELEASE' }) },
@@ -68,6 +72,7 @@ async function layoutRequest(positions) {
     requireRole(...names) { roles = names },
     pool: { connect: async () => client },
     validateFloorLayoutUpdate,
+    validateFreePlan,
     FloorLayoutConflictError,
     FloorLayoutValidationError,
   })
@@ -87,6 +92,17 @@ test('cashier layout route updates only floor metadata and commits once', async 
   assert.equal(result.queries.filter(({ sql }) => sql === 'COMMIT').length, 1)
   assert.equal(result.queries.filter(({ sql }) => sql.startsWith('UPDATE restaurant_tables SET floor_x = $1')).length, 2)
   assert.ok(result.queries.every(({ sql }) => !/SET\s+(table_number|capacity|is_enabled)/i.test(sql)))
+})
+
+test('free positions are saved, markers are revision checked, and old clients cannot erase them', () => {
+  const current = tables.map((table) => ({ ...table, floorPoint: { x: table.id === 'a' ? 30 : 300, y: 260 } }))
+  const positions = current.map((table, index) => ({ tableId: table.id, x: index, y: 0, expectedX: table.floorX, expectedY: table.floorY, point: table.floorPoint, expectedPoint: table.floorPoint }))
+  const normalized = validateFloorLayoutUpdate({ positions }, current)
+  const marker = { id: 'counter', type: 'cashier', zone: 'Main hall', x: 5, y: 5 }
+  assert.deepEqual(validateFreePlan({ markers: [marker], expectedRevision: 1 }, normalized, { revision: 1 }), [marker])
+  assert.throws(() => validateFreePlan({ markers: [], expectedRevision: 0 }, normalized, { revision: 1 }), /CONFLICT/)
+  assert.throws(() => validateFloorLayoutUpdate({ positions: positions.map(({ point: _point, ...position }) => position) }, current), FloorLayoutConflictError)
+  assert.throws(() => validateFloorLayoutUpdate({ positions: positions.map((position) => ({ ...position, expectedPoint: null })) }, current), FloorLayoutConflictError)
 })
 
 test('areas have independent positions; moving an area finds a free slot', () => {
@@ -131,4 +147,17 @@ test('cashier layout route rolls back a stale save', async () => {
   assert.equal(result.code, 409)
   assert.ok(result.queries.some(({ sql }) => sql === 'ROLLBACK'))
   assert.ok(!result.queries.some(({ sql }) => sql.startsWith('UPDATE restaurant_tables')))
+})
+
+test('appearance is validated and stale changes rejected; old clients preserve it', () => {
+  const style = { shape: 'rectangle', size: 'large', orientation: 'vertical' }
+  const current = tables.map((table) => ({ ...table, floorStyle: style }))
+  const positions = current.map((table, index) => ({ tableId: table.id, x: index, y: 0, expectedX: table.floorX, expectedY: table.floorY }))
+  assert.deepEqual(validateFloorLayoutUpdate({ positions }, current)[0].style, style)
+  const edits = positions.map((position) => ({ ...position, style: DEFAULT_TABLE_STYLE, expectedStyle: style }))
+  assert.deepEqual(validateFloorLayoutUpdate({ positions: edits }, current)[0].style, DEFAULT_TABLE_STYLE)
+  assert.throws(() => validateFloorLayoutUpdate({ positions: edits }, tables), FloorLayoutConflictError)
+  for (const invalid of [null, [], { ...style, shape: 'triangle' }, { ...style, size: 'giant' }, { ...style, orientation: 'diagonal' }, { ...style, extra: 1 }]) {
+    assert.throws(() => validateFloorLayoutUpdate({ positions: [{ ...edits[0], style: invalid }, edits[1]] }, current), FloorLayoutValidationError)
+  }
 })

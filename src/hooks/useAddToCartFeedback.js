@@ -21,7 +21,7 @@ function useAddToCartFeedback() {
     }
   }, [])
 
-  async function addItem(menuItem, quantity = 1, specialInstructions = '') {
+  async function addItem(menuItem, quantity = 1, specialInstructions = '', selections = [], orderType = 'dine_in') {
     if (isAddingRef.current) return
     if (!isMenuItemOrderable(menuItem) || !Number.isInteger(Number(quantity)) || Number(quantity) < 1) {
       showToast('This item is no longer available.', 'error')
@@ -33,7 +33,7 @@ function useAddToCartFeedback() {
 
     try {
       await wait(150)
-      addToCart(menuItem, quantity, specialInstructions)
+      if (!addToCart(menuItem, quantity, specialInstructions, selections, orderType)) throw new Error('Please review the dish options and quantity.')
       if (isMountedRef.current) setStatus('added')
       showToast('✅ Added to Cart', 'success', {
         detail: `${menuItem.name} × ${quantity}`,
@@ -42,7 +42,7 @@ function useAddToCartFeedback() {
       await wait(1000)
     } catch (error) {
       console.error('[Cart] Failed to add item:', error)
-      showToast('Unable to add item to cart.', 'error')
+      showToast(error.message || 'Unable to add item to cart.', 'error')
     } finally {
       if (isMountedRef.current) setStatus('idle')
       isAddingRef.current = false

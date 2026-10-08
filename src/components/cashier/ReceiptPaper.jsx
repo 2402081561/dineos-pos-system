@@ -1,6 +1,7 @@
 import { formatCurrency } from '../../utils/currency'
 import { getReceiptDetails } from '../../utils/receipt'
 import useShopSettings from '../../hooks/useShopSettings'
+import { optionText } from '../../../server/src/posRules'
 
 function paidDate(value) {
   if (!value) return '—'
@@ -20,7 +21,9 @@ export default function ReceiptPaper({ receipt }) {
   const details = getReceiptDetails(receipt)
   return <article aria-label={`Receipt ${receipt.receiptNumber}`} className="receipt-print thermal-receipt">
     <header className="receipt-heading">
-      <h1 className="break-words">{receipt.restaurantName || name}</h1>
+      {receipt.shopSnapshot?.logoUrl && <img alt="" onError={(event) => { event.currentTarget.style.display = 'none' }} src={receipt.shopSnapshot.logoUrl} style={{ maxWidth: '35mm', maxHeight: '25mm', margin: '0 auto 2mm', objectFit: 'contain' }} />}<h1 className="break-words">{receipt.restaurantName || name}</h1>
+      {receipt.shopSnapshot?.address && <p className="whitespace-pre-line">{receipt.shopSnapshot.address}</p>}
+      {receipt.shopSnapshot?.phone && <p>{receipt.shopSnapshot.phone}</p>}
       <p>Payment receipt</p>
       <p className="receipt-table-label">TABLE</p>
       <p className="receipt-table-number">{receipt.tableNumber ?? '—'}</p>
@@ -28,6 +31,7 @@ export default function ReceiptPaper({ receipt }) {
     <dl className="receipt-block receipt-information">
       <ReceiptRow label="Receipt"><strong>{receipt.receiptNumber}</strong></ReceiptRow>
       <ReceiptRow label="Date">{paidDate(receipt.paidAt)}</ReceiptRow>
+      <ReceiptRow label="Type">{details.orderType}</ReceiptRow>
       <ReceiptRow label="Table">{receipt.tableNumber ?? '—'}</ReceiptRow>
       <ReceiptRow label="Cashier">{details.cashier}</ReceiptRow>
       <ReceiptRow label="Customer(s)">{details.customers.join(', ') || 'Guest'}</ReceiptRow>
@@ -35,14 +39,14 @@ export default function ReceiptPaper({ receipt }) {
     <div className="receipt-block receipt-items">
       {details.items.map((item, index) => <div className="receipt-item" key={`${item.menuItemId}-${index}`}>
         <div className="receipt-row"><p>{item.quantity}× {item.name}</p><p className="receipt-amount">{formatCurrency((Number(item.price) || 0) * (Number(item.quantity) || 0))}</p></div>
-        {item.notes && <p className="receipt-item-note">{item.notes}</p>}
+        {item.orderType === 'take_away' && <p className="receipt-item-note font-bold">TAKE AWAY</p>}{optionText(item.optionSnapshot) && <p className="receipt-item-note">{optionText(item.optionSnapshot)}</p>}{item.notes && <p className="receipt-item-note">{item.notes}</p>}
       </div>)}
     </div>
     <dl className="receipt-block receipt-totals">
       <ReceiptRow label="Subtotal">{formatCurrency(details.subtotal)}</ReceiptRow>
       {details.discount > 0 && <ReceiptRow label="Discount">−{formatCurrency(details.discount)}</ReceiptRow>}
-      <ReceiptRow label="Service charge">{formatCurrency(details.serviceCharge)}</ReceiptRow>
-      <ReceiptRow label="SST">{formatCurrency(details.sst)}</ReceiptRow>
+      {details.serviceCharge > 0 && <ReceiptRow label="Service charge">{formatCurrency(details.serviceCharge)}</ReceiptRow>}
+      {details.sst > 0 && <ReceiptRow label="SST">{formatCurrency(details.sst)}</ReceiptRow>}
       <ReceiptRow className="receipt-total" label="TOTAL">{formatCurrency(receipt.grandTotal)}</ReceiptRow>
       <ReceiptRow label="Paid by">{receipt.paymentMethod}</ReceiptRow>
       {details.cashTender && <>
@@ -50,6 +54,6 @@ export default function ReceiptPaper({ receipt }) {
         <ReceiptRow className="receipt-change" label="Change">{formatCurrency(details.cashTender.change)}</ReceiptRow>
       </>}
     </dl>
-    <footer className="receipt-block receipt-footer">Thank you! Please come again.</footer>
+    <footer className="receipt-block receipt-footer whitespace-pre-line">{receipt.shopSnapshot?.receiptFooter ?? 'Thank you! Please come again.'}</footer>
   </article>
 }

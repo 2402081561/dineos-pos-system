@@ -26,17 +26,17 @@ function groupBy(items, getKey) {
   }, new Map())
 }
 
-function calculateAnalytics({ categories, menuItems, orders, requests, tables }, range) {
+function calculateAnalytics({ categories, menuItems, orders, requests, tables, payments = [] }, range) {
   const filteredOrders = orders.filter((order) => isWithinRange(order.createdAt, range))
   const filteredRequests = requests.filter((request) => isWithinRange(request.createdAt, range))
   const servedOrders = filteredOrders.filter((order) => completedStatuses.has(String(order.status).toLowerCase()))
-  const paidOrders = orders.filter((order) => String(order.paymentStatus ?? '').toLowerCase() === 'paid'
+  const paidOrders = payments.filter((order) => String(order.paymentStatus ?? '').toLowerCase() === 'paid'
     && !cancelledStatuses.has(String(order.status ?? '').toLowerCase())
     && isWithinRange(order.paidAt, range))
   const validOrders = filteredOrders.filter((order) => !cancelledStatuses.has(String(order.status).toLowerCase()))
   const totalRevenue = paidOrders.reduce((sum, order) => sum + nonNegativeNumber(order.grandTotal), 0)
   const totalItems = paidOrders.reduce((sum, order) => sum + (Array.isArray(order.items) ? order.items : []).reduce((itemSum, item) => itemSum + nonNegativeNumber(item?.quantity), 0), 0)
-  const uniqueCustomers = new Set(paidOrders.map((order) => order.sessionId || order.customerNickname).filter(Boolean)).size
+  const uniqueCustomers = new Set(paidOrders.flatMap((order) => order.sessionIds ?? [order.sessionId || order.customerNickname]).filter(Boolean)).size
   const menuById = new Map(menuItems.map((item) => [item.id, item]))
   const categoryById = new Map(categories.map((category) => [category.id, category]))
 
@@ -92,7 +92,7 @@ function calculateAnalytics({ categories, menuItems, orders, requests, tables },
   }
 
   const now = new Date()
-  const currentYearOrders = orders.filter((order) => toDate(order.paidAt)?.getFullYear() === now.getFullYear()
+  const currentYearOrders = payments.filter((order) => toDate(order.paidAt)?.getFullYear() === now.getFullYear()
     && String(order.paymentStatus ?? '').toLowerCase() === 'paid'
     && !cancelledStatuses.has(String(order.status ?? '').toLowerCase()))
   const revenueFor = (start, end) => currentYearOrders.filter((order) => isWithinRange(order.paidAt, { start, end })).reduce((sum, order) => sum + nonNegativeNumber(order.grandTotal), 0)

@@ -82,6 +82,13 @@
   }
 }
 
+@media (max-width: 639px) {
+  .customer-ui main button { min-height: 44px; }
+  .customer-ui input:not([type='checkbox']):not([type='radio']),
+  .customer-ui textarea,
+  .customer-ui select { font-size: 16px; }
+}
+
 .receipt-preview { background: #e5e7eb; border-radius: 12px; padding: 24px 16px 40px; }
 .receipt-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-bottom: 24px; }
 .thermal-receipt { box-sizing: border-box; width: 100%; max-width: 440px; margin: 0 auto; padding: 28px 24px; background: #fff; color: #111; border-radius: 6px; box-shadow: 0 12px 32px rgb(0 0 0 / 8%); font-family: Arial, sans-serif; font-size: 15px; line-height: 1.4; font-variant-numeric: tabular-nums; }

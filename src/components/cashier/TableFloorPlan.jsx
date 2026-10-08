@@ -1,9 +1,12 @@
 import { useMemo, useRef, useState } from 'react'
 import Button from '../common/Button'
 import { saveSupabaseCashierTableLayout } from '../../services/adminApiService'
-import { FLOOR_COLUMNS, FLOOR_MAX_ROWS, floorZone, moveTableOnFloor, moveTableToZone, placeTablesOnFloor } from '../../utils/tableFloorLayout'
+import { floorZone, moveTableToZone, placeTablesOnFloor } from '../../utils/tableFloorLayout'
 import { formatCurrency } from '../../utils/currency'
 import TableSummaryDialog from './TableSummaryDialog'
+import { tableStyle } from '../../../server/src/tableAppearance'
+import { layoutHasOverlap, layoutObjects, MARKER_LABELS, overlaps, PLAN_MAX_HEIGHT, TABLE_HEIGHT, TABLE_WIDTH, tablePoint, validPoint } from '../../../server/src/freeFloorLayout'
+import FreeFloorCanvas from './FreeFloorCanvas'
 
 const statusLabels = {
   available: 'Available',
@@ -23,10 +26,12 @@ const tileStyles = {
   inactive: 'border-slate-200 bg-slate-100 text-slate-500',
 }
 
-function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTable, paymentTables, onLayoutSaved, onSelectTable, selectedTableId }) {
+function TableFloorPlan({ clearableTables, floorTables, floorPlan = { markers: [], revision: 0 }, onClearTable, onOpenTable, paymentTables, onLayoutSaved, onSelectTable, selectedTableId }) {
   const publishedLayout = useMemo(() => placeTablesOnFloor(floorTables), [floorTables])
   const [draftLayout, setDraftLayout] = useState([])
   const [originalPositions, setOriginalPositions] = useState([])
+  const [draftMarkers, setDraftMarkers] = useState([])
+  const [expectedRevision, setExpectedRevision] = useState(0)
   const [selectedId, setSelectedId] = useState(null)
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -34,15 +39,17 @@ function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTabl
   const [areaFilter, setAreaFilter] = useState('')
   const [areaName, setAreaName] = useState('')
   const [summaryId, setSummaryId] = useState(null)
-  const [view, setView] = useState('cards')
+  const [view, setView] = useState('plan')
   const savingRef = useRef(false)
   const visibleLayout = isEditing ? draftLayout : publishedLayout
+  const markers = isEditing ? draftMarkers : floorPlan.markers
   const paymentByNumber = useMemo(() => new Map(paymentTables.map((table) => [String(table.tableNumber), table])), [paymentTables])
   const clearableByNumber = useMemo(() => new Map(clearableTables.map((table) => [String(table.tableNumber), table])), [clearableTables])
-  const areas = [...new Set(visibleLayout.map(floorZone))].sort((a, b) => a.localeCompare(b))
+  const areas = [...new Set([...visibleLayout.map(floorZone), ...markers.map((marker) => marker.zone)])].sort((a, b) => a.localeCompare(b))
   const activeFilter = areas.includes(areaFilter) ? areaFilter : ''
   const displayedAreas = activeFilter ? [activeFilter] : areas
   const selectedTable = draftLayout.find((table) => table.id === selectedId)
+  const selectedMarker = draftMarkers.find((marker) => marker.id === selectedId)
   const summaryTable = floorTables.find((table) => table.id === summaryId)
   const summaryPaymentCandidate = summaryTable && paymentByNumber.get(String(summaryTable.tableNumber))
   const summaryPayment = summaryPaymentCandidate?.orders.every((order) => order.tableSessionId === summaryTable.tableSessionId) ? summaryPaymentCandidate : null
@@ -54,7 +61,9 @@ function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTabl
 
   function beginEditing() {
     setDraftLayout(publishedLayout)
-    setOriginalPositions(floorTables.map((table) => ({ id: table.id, floorX: table.floorX ?? null, floorY: table.floorY ?? null, floorZone: floorZone(table) })))
+    setDraftMarkers(floorPlan.markers.map((marker) => ({ ...marker })))
+    setExpectedRevision(floorPlan.revision)
+    setOriginalPositions(floorTables.map((table) => ({ id: table.id, floorX: table.floorX ?? null, floorY: table.floorY ?? null, floorZone: floorZone(table), floorStyle: tableStyle(table.floorStyle), floorPoint: table.floorPoint ?? null })))
     setSelectedId(null)
     setSaveError('')
     setIsEditing(true)
@@ -67,26 +76,49 @@ function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTabl
     setDraftLayout([])
   }
 
-  function chooseCell(x, y) {
-    if (!selectedId || isSaving) return
-    setDraftLayout((current) => moveTableOnFloor(current, selectedId, x, y))
-    setSelectedId(null)
-    setSaveError('')
-  }
-
   function chooseTable(table) {
     if (isEditing) {
       if (isSaving) return
-      if (!selectedId || selectedId === table.id || floorZone(selectedTable) !== floorZone(table)) {
-        setSelectedId(selectedId === table.id ? null : table.id)
-        setAreaName(floorZone(table))
-      } else {
-        chooseCell(table.x, table.y)
-      }
+      setSelectedId(table.id)
+      setAreaName(floorZone(table))
       return
     }
     if (onSelectTable) onSelectTable(table.id)
     else setSummaryId(table.id)
+  }
+
+  function moveObject(id, point) {
+    if (!isEditing || isSaving) return
+    const nextTables = draftLayout.map((table) => table.id === id ? { ...table, floorPoint: point } : table)
+    const nextMarkers = draftMarkers.map((marker) => marker.id === id ? { ...marker, ...point } : marker)
+    if (!validPoint(point, draftMarkers.some((marker) => marker.id === id) ? 72 : TABLE_HEIGHT) || layoutHasOverlap(layoutObjects(nextTables, nextMarkers))) {
+      setSaveError('This position overlaps another table or marker. Move it to an empty space.')
+      return
+    }
+    setDraftLayout(nextTables)
+    setDraftMarkers(nextMarkers)
+    setSaveError('')
+  }
+
+  function freeSpot(zone, height, tables = draftLayout) {
+    const objects = layoutObjects(tables, draftMarkers)
+    for (let y = 0; y <= PLAN_MAX_HEIGHT - height; y += 20) {
+      for (let x = 0; x <= 1200 - TABLE_WIDTH; x += 20) {
+        const candidate = { id: 'new', zone, x, y, height }
+        if (!objects.some((object) => overlaps(object, candidate))) return { x, y }
+      }
+    }
+    throw new Error('This area is full. Choose another area.')
+  }
+
+  function addMarker(type) {
+    try {
+      const zone = activeFilter || (selectedTable ? floorZone(selectedTable) : selectedMarker?.zone) || areas[0] || 'Main hall'
+      const marker = { id: crypto.randomUUID(), type, zone, ...freeSpot(zone, 72) }
+      setDraftMarkers((current) => [...current, marker])
+      setSelectedId(marker.id)
+      setSaveError('')
+    } catch (error) { setSaveError(error.message) }
   }
 
   function changeArea() {
@@ -94,7 +126,9 @@ function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTabl
     try {
       const name = areaName.trim()
       const canonicalName = areas.find((area) => area.toLocaleLowerCase() === name.toLocaleLowerCase()) ?? name
-      setDraftLayout(moveTableToZone(draftLayout, selectedId, canonicalName))
+      const moved = moveTableToZone(draftLayout, selectedId, canonicalName)
+      const point = freeSpot(canonicalName, TABLE_HEIGHT, moved.filter((table) => table.id !== selectedId))
+      setDraftLayout(moved.map((table) => table.id === selectedId ? { ...table, floorPoint: point } : table))
       setAreaFilter(canonicalName)
       setAreaName(canonicalName)
       setSaveError('')
@@ -113,12 +147,16 @@ function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTabl
       expectedX: expectedById.get(table.id)?.floorX ?? null,
       expectedY: expectedById.get(table.id)?.floorY ?? null,
       expectedZone: expectedById.get(table.id)?.floorZone,
+      style: tableStyle(table.floorStyle),
+      expectedStyle: expectedById.get(table.id)?.floorStyle,
+      point: tablePoint(table),
+      expectedPoint: expectedById.get(table.id)?.floorPoint ?? null,
     }))
     try {
       setIsSaving(true)
       setSaveError('')
-      const saved = await saveSupabaseCashierTableLayout(positions)
-      onLayoutSaved(saved.positions)
+      const saved = await saveSupabaseCashierTableLayout(positions, { markers: draftMarkers, expectedRevision })
+      onLayoutSaved(saved.positions, saved.floorPlan)
       cancelEditing()
     } catch (error) {
       console.error('[Cashier] Failed to save table layout:', error)
@@ -129,12 +167,11 @@ function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTabl
     }
   }
 
-  return <section className="surface-card overflow-hidden p-4 sm:p-6">
+  return <section className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-4">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
-        <p className="eyebrow">Restaurant floor</p>
-        <h2 className="mt-1 text-xl font-extrabold text-slate-900">Table layout</h2>
-        <p className="mt-1 text-sm text-slate-500">Select any table to see its orders and payment summary.</p>
+        <h2 className="text-lg font-bold text-slate-900">Tables</h2>
+        <p className="mt-1 text-xs text-slate-500">Select a table to view its bill.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {!isEditing && <Button onClick={() => setView(view === 'cards' ? 'plan' : 'cards')} variant="outline">{view === 'cards' ? 'Floor plan' : 'Table cards'}</Button>}
@@ -147,11 +184,11 @@ function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTabl
     <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs font-semibold text-slate-600">
       {['available', 'occupied', 'ordering', 'awaiting_payment', 'ready_to_clear', 'inactive'].map((status) => <span className="inline-flex items-center gap-1.5" key={status}><span className={`h-2.5 w-2.5 rounded-full border ${tileStyles[status]}`} />{statusLabels[status]}</span>)}
     </div>
-    {isEditing && <p aria-live="polite" className="mt-4 rounded-xl bg-orange-50 p-3 text-sm text-orange-900">{selectedId ? 'Now choose an empty space or another table to swap positions.' : 'Select a table, then choose where to place it. Changes are saved only when you press Save layout.'}</p>}
+    {isEditing && <div className="mt-4 rounded-xl bg-orange-50 p-3"><p className="text-sm text-orange-900">Drag tables and markers to match your shop. Changes are saved only when you press Save layout.</p><div className="mt-3 flex flex-wrap gap-2">{Object.entries(MARKER_LABELS).map(([type, label]) => <button key={type} type="button" disabled={isSaving} onClick={() => addMarker(type)} className="rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm font-semibold">+ {label}</button>)}</div></div>}
     {areas.length > 0 && <div aria-label="Filter tables by area" className="mt-4 flex flex-wrap gap-2" role="group">
       {['', ...areas].map((area) => <button aria-pressed={activeFilter === area} className={`max-w-full break-words rounded-full px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-orange-400 ${activeFilter === area ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`} key={area || 'all'} onClick={() => { setAreaFilter(area); setSelectedId(null) }} type="button">{area || 'All areas'}</button>)}
     </div>}
-    {isEditing && selectedTable && <div className="mt-4 rounded-2xl border border-orange-200 p-4">
+    {isEditing && selectedTable && <div className="order-2 mt-4 rounded-2xl border border-orange-200 p-4">
       <label className="text-sm font-bold" htmlFor="floor-table-area">Area for Table {selectedTable.tableNumber}</label>
       <div className="mt-2 flex flex-col gap-2 sm:flex-row">
         <input className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" disabled={isSaving} id="floor-table-area" list="floor-area-options" maxLength={40} onChange={(event) => setAreaName(event.target.value)} placeholder="e.g. Main hall, Outdoor, Private room" value={areaName} />
@@ -159,8 +196,15 @@ function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTabl
         <Button disabled={isSaving} onClick={changeArea} variant="outline">Move to area</Button>
       </div>
       <p className="mt-2 text-xs text-slate-500">Choose an existing area or enter a new name, then save the layout.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">{[
+        ['shape', 'Shape', [['round', 'Round'], ['square', 'Square'], ['rectangle', 'Long table']]],
+        ['size', 'Size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']]],
+        ['orientation', 'Direction', [['horizontal', 'Horizontal'], ['vertical', 'Vertical']]],
+      ].map(([field, label, options]) => <label key={field} className="text-sm font-semibold">{label}<select className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2" disabled={isSaving || (field === 'orientation' && tableStyle(selectedTable.floorStyle).shape !== 'rectangle')} value={tableStyle(selectedTable.floorStyle)[field]} onChange={(event) => setDraftLayout((current) => current.map((table) => table.id === selectedId ? { ...table, floorStyle: { ...tableStyle(table.floorStyle), [field]: event.target.value } } : table))}>{options.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>)}</div>
+      <p className="mt-2 text-xs text-slate-500">Drag this table freely on the plan. Tables and markers must not overlap.</p>
     </div>}
-    {saveError && <p aria-live="assertive" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{saveError}</p>}
+    {isEditing && selectedMarker && <div className="order-2 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-3"><p className="text-sm font-bold">{MARKER_LABELS[selectedMarker.type]} · {selectedMarker.zone}</p><button type="button" disabled={isSaving} onClick={() => { setDraftMarkers((current) => current.filter((marker) => marker.id !== selectedId)); setSelectedId(null) }} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-700">Remove marker</button></div>}
+    {saveError && <p aria-live="assertive" className="order-2 mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{saveError}</p>}
     {!isEditing && view === 'cards' ? <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
       {visibleLayout.filter((table) => !activeFilter || floorZone(table) === activeFilter).map((table) => <button type="button" key={table.id} aria-pressed={selectedTableId === table.id} onClick={() => chooseTable(table)} className={`min-w-0 rounded-2xl border p-4 text-left focus:outline-none focus:ring-2 focus:ring-orange-500 ${tileStyles[tableStatus(table)] ?? tileStyles.inactive} ${selectedTableId === table.id ? 'ring-2 ring-orange-500' : ''}`}>
         <span className="block text-lg font-extrabold">Table {table.tableNumber}</span>
@@ -169,45 +213,24 @@ function TableFloorPlan({ clearableTables, floorTables, onClearTable, onOpenTabl
         <span className="mt-1 block font-bold">{formatCurrency(table.unpaidTotal)}</span>
       </button>)}
       {floorTables.length === 0 && <p className="col-span-2 text-sm text-slate-500">No tables configured.</p>}
-    </div> : floorTables.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-50 p-6 text-sm text-slate-500">No tables have been configured yet.</p> : displayedAreas.map((area) => <FloorArea
-      area={area} getStatus={tableStatus} isEditing={isEditing} isSaving={isSaving} key={`${area}-${isEditing}`}
-      onChooseCell={chooseCell} onChooseTable={chooseTable} paymentByNumber={paymentByNumber}
-      selectedId={selectedId} selectedArea={selectedTable && floorZone(selectedTable)} tables={visibleLayout.filter((table) => floorZone(table) === area)}
+    </div> : floorTables.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-50 p-6 text-sm text-slate-500">No tables have been configured yet.</p> : displayedAreas.map((area) => <FreeFloorCanvas
+      area={area} editing={isEditing} disabled={isSaving} key={`${area}-${isEditing}`}
+      onMove={moveObject} onSelectTable={chooseTable} onSelectMarker={(marker) => setSelectedId(marker.id)}
+      selectedId={isEditing ? selectedId : selectedTableId} tables={visibleLayout.filter((table) => floorZone(table) === area)}
+      markers={markers.filter((marker) => marker.zone === area)}
+      renderTable={(table) => <><span className="flex h-28 w-full items-center justify-center"><TableShape table={table} status={tableStatus(table)} /></span><span className="text-[11px] font-semibold leading-tight text-slate-600">{statusLabels[tableStatus(table)] ?? 'Available'}</span><span className="mt-1 text-xs font-bold text-slate-800">{formatCurrency(table.unpaidTotal)}</span></>}
     />)}
-    {!isEditing && view === 'plan' && <p className="mt-3 text-xs text-slate-500">On a phone, swipe sideways to see the full floor plan.</p>}
     {summaryId && <TableSummaryDialog table={summaryTable} statusLabel={summaryTable ? statusLabels[tableStatus(summaryTable)] : ''} payment={summaryPayment} clearable={summaryClearable} onClose={() => setSummaryId(null)} onOpenTable={onOpenTable} onClearTable={onClearTable} />}
   </section>
 }
 
-function FloorArea({ area, tables, isEditing, isSaving, selectedId, selectedArea, onChooseCell, onChooseTable, paymentByNumber, getStatus }) {
-  const [extraRows, setExtraRows] = useState(0)
-  const tableByCell = new Map(tables.map((table) => [`${table.x}:${table.y}`, table]))
-  const highestRow = tables.reduce((highest, table) => Math.max(highest, table.y ?? 0), 0)
-  const rowCount = Math.min(FLOOR_MAX_ROWS, Math.max(2, Math.ceil(tables.length / FLOOR_COLUMNS) + 1, highestRow + 2, extraRows))
-  return <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
-    <div className="mb-3 flex items-center justify-between gap-3"><h3 className="break-words font-bold text-slate-700">{area}</h3><span className="shrink-0 text-xs text-slate-500">{tables.length} tables</span></div>
-    <div className="overflow-x-auto pb-1">
-      <div aria-label={`${area} floor plan`} className="grid min-w-[800px] grid-cols-8 gap-2" role="group">
-        {Array.from({ length: rowCount * FLOOR_COLUMNS }, (_, index) => {
-          const x = index % FLOOR_COLUMNS
-          const y = Math.floor(index / FLOOR_COLUMNS)
-          const table = tableByCell.get(`${x}:${y}`)
-          if (!table) return isEditing
-            ? <button aria-label={`${area}, empty position, column ${x + 1}, row ${y + 1}`} className="min-h-24 rounded-2xl border border-dashed border-slate-300 bg-white/70 hover:border-orange-400 hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-orange-400" disabled={!selectedId || selectedArea !== area || isSaving} key={`cell-${index}`} onClick={() => onChooseCell(x, y)} type="button" />
-            : <div aria-hidden="true" className="min-h-24 rounded-2xl border border-dashed border-slate-200 bg-white/50" key={`cell-${index}`} />
-          const status = getStatus(table)
-          const payment = paymentByNumber.get(String(table.tableNumber))
-          return <button
-            aria-label={`Table ${table.tableNumber}, ${statusLabels[status] ?? 'available'}${isEditing ? ', select position' : ', view summary'}`}
-            aria-pressed={isEditing ? selectedId === table.id : undefined}
-            className={`flex min-h-24 flex-col justify-between rounded-2xl border p-2.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-orange-400 ${tileStyles[status] ?? tileStyles.available} ${selectedId === table.id ? 'ring-2 ring-orange-500' : ''}`}
-            disabled={isSaving} key={table.id} onClick={() => onChooseTable(table)} type="button"
-          ><span className="text-lg font-extrabold leading-tight">Table {table.tableNumber}</span><span className="mt-1 text-[11px] font-semibold leading-tight">{statusLabels[status] ?? 'Available'}{payment ? ` · ${formatCurrency(payment.grandTotal)}` : ''}</span></button>
-        })}
-      </div>
-    </div>
-    {isEditing && rowCount < FLOOR_MAX_ROWS && <Button className="mt-3" disabled={isSaving} onClick={() => setExtraRows(rowCount + 1)} variant="outline">Add a row</Button>}
-  </div>
+function TableShape({ table, status }) {
+  const style = tableStyle(table.floorStyle)
+  const dimensions = style.shape === 'rectangle'
+    ? (style.orientation === 'vertical' ? 'h-[104px] w-16 rounded-xl' : 'h-16 w-[120px] rounded-xl')
+    : style.shape === 'round' ? 'h-24 w-24 rounded-full' : 'h-24 w-24 rounded-xl'
+  const scale = { small: 0.7, medium: 0.85, large: 1 }[style.size]
+  return <span style={{ transform: `scale(${scale})` }} className={`flex shrink-0 items-center justify-center border-2 text-lg font-bold ${dimensions} ${tileStyles[status] ?? tileStyles.available}`}>T{table.tableNumber}</span>
 }
 
 export default TableFloorPlan

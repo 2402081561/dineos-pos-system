@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ShopSettingsContext } from './ShopSettingsContext'
 import { getShopSettings, updateShopSettings } from '../services/shopSettingsService'
+import { defaultConfig } from '../../server/src/posRules'
 
 export default function ShopSettingsProvider({ children }) {
-  const [name, setName] = useState('DineOS')
+  const [settings, setSettings] = useState({ name: 'DineOS', config: defaultConfig, revision: 0, isAcceptingOrders: false })
+  const name = settings.name
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const revision = useRef(0)
@@ -23,7 +25,7 @@ export default function ShopSettingsProvider({ children }) {
     try {
       const settings = await getShopSettings(controller.signal)
       if (currentRevision !== revision.current) return
-      setName(settings.name)
+      setSettings(settings)
       setError('')
     } catch (loadError) {
       if (currentRevision !== revision.current) return
@@ -49,19 +51,19 @@ export default function ShopSettingsProvider({ children }) {
     }
   }, [refresh, invalidateRead])
 
-  const saveName = useCallback(async (nextName, expectedName) => {
+  const saveSettings = useCallback(async (nextSettings, expectedRevision) => {
     // A delayed read must not undo the name returned by a successful save.
     ++revision.current
     pending.current?.abort()
-    const settings = await updateShopSettings(nextName, expectedName)
+    const settings = await updateShopSettings(nextSettings, expectedRevision)
     ++revision.current
     pending.current?.abort()
-    setName(settings.name)
+    setSettings(settings)
     setError('')
     setIsLoading(false)
     return settings
   }, [])
 
-  const value = useMemo(() => ({ name, isLoading, error, refresh, saveName }), [name, isLoading, error, refresh, saveName])
+  const value = useMemo(() => ({ name, settings, config: settings.config, isLoading, error, refresh, saveSettings }), [name, settings, isLoading, error, refresh, saveSettings])
   return <ShopSettingsContext.Provider value={value}>{children}</ShopSettingsContext.Provider>
 }

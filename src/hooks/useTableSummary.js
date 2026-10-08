@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import useCustomerSession from './useCustomerSession'
 import { getCustomerOrders, getCustomerTableSummary } from '../services/customerApi'
+import { ordersForParticipant } from '../utils/customerOrder'
 
 function getParticipantStatus(orders) {
   if (orders.length === 0) return 'No orders yet'
@@ -45,11 +46,11 @@ function useTableSummary() {
   const participants = useMemo(() => {
     const tableParticipants = summaryParticipants
     return tableParticipants.map((participant) => {
-      const participantOrders = participant.isCurrentCustomer ? orders : []
+      const participantOrders = ordersForParticipant(orders, participant)
       return {
         ...participant,
         orders: participantOrders,
-        status: participant.isCurrentCustomer ? getParticipantStatus(participantOrders) : participant.status,
+        status: participant.isCurrentCustomer || participant.isCounterOrder ? getParticipantStatus(participantOrders) : participant.status,
         subtotal: Number(participant.subtotal ?? sumOrderField(participantOrders, 'subtotal')),
         serviceCharge: Number(participant.serviceCharge ?? sumOrderField(participantOrders, 'serviceCharge')),
         sst: Number(participant.sst ?? sumOrderField(participantOrders, 'sst')),

@@ -14,6 +14,13 @@ const migrations = ['001_initial_schema.sql', '002_firebase_snapshot.sql', '003_
 migrations.push('019_table_floor_areas.sql')
 migrations.push('020_counter_order_idempotency.sql')
 migrations.push('021_shop_settings.sql')
+migrations.push('022_store_options_and_order_changes.sql')
+migrations.push('023_take_away_order_type.sql')
+migrations.push('024_item_order_types.sql')
+migrations.push('025_legacy_item_order_type_default.sql')
+migrations.push('026_partial_payments_and_handoffs.sql')
+migrations.push('027_table_appearance.sql')
+migrations.push('028_free_floor_plan.sql')
 const { Pool } = pg
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 

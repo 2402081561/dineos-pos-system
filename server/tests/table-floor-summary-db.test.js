@@ -15,20 +15,24 @@ test('PostgreSQL floor summary separates served bills from all unpaid orders and
     await client.query('SET LOCAL search_path TO pg_temp, public')
     // Temporary tables shadow production names for this connection only.
     await client.query(`
-      CREATE TEMP TABLE restaurant_tables (id text, table_number int, capacity int DEFAULT 4, floor_x int, floor_y int, floor_zone text DEFAULT 'Main hall', is_enabled bool DEFAULT true) ON COMMIT DROP;
+      CREATE TEMP TABLE restaurant_tables (id text, table_number int, capacity int DEFAULT 4, floor_x int, floor_y int, floor_zone text DEFAULT 'Main hall', floor_style jsonb DEFAULT '{"shape":"square","size":"medium","orientation":"horizontal"}', floor_point jsonb, is_enabled bool DEFAULT true) ON COMMIT DROP;
       CREATE TEMP TABLE table_sessions (id text, table_id text, status text, created_at timestamptz DEFAULT now()) ON COMMIT DROP;
       CREATE TEMP TABLE customer_sessions (table_session_id text, left_at timestamptz) ON COMMIT DROP;
-      CREATE TEMP TABLE orders (table_session_id text, grand_total numeric, status text, payment_status text) ON COMMIT DROP;
+      CREATE TEMP TABLE orders (table_session_id text, grand_total numeric, status text, payment_status text, paid_amount numeric DEFAULT 0) ON COMMIT DROP;
       INSERT INTO restaurant_tables (id, table_number) VALUES ('t1',1), ('t2',2), ('t3',3), ('t4',4), ('t5',5);
       INSERT INTO table_sessions (id, table_id, status) VALUES ('s1','t1','active'), ('old','t1','completed'), ('s3','t3','active'), ('s4','t4','active'), ('s5','t5','active');
       INSERT INTO customer_sessions VALUES ('s1',NULL), ('s1',now());
       INSERT INTO orders VALUES ('s1',20,'preparing','pending'), ('s1',10,'served','pending'), ('s1',90,'cancelled','pending'), ('s1',5,'served','paid'),
         ('old',999,'served','pending'), ('s3',0,'served','pending'), ('s4',10,'served','paid'), ('s5',10,'cancelled','pending');
     `)
+    await client.query(`UPDATE restaurant_tables SET floor_style = '{"shape":"round","size":"large","orientation":"horizontal"}' WHERE id = 't1'`)
+    await client.query(`UPDATE restaurant_tables SET floor_point = '{"x":120,"y":200}' WHERE id = 't1'`)
     const { rows } = await client.query(query)
     const mixed = rows.find((row) => row.id === 't1')
+    assert.deepEqual(mixed.floorStyle, { shape: 'round', size: 'large', orientation: 'horizontal' })
+    assert.deepEqual(mixed.floorPoint, { x: 120, y: 200 })
     assert.equal(mixed.unpaidTotal, 30)
-    assert.equal(mixed.payableTotal, 10)
+    assert.equal(mixed.payableTotal, 30)
     assert.equal(mixed.paidOrderCount, 1)
     assert.equal(mixed.unpaidOrderCount, 2)
     assert.equal(mixed.participantCount, 1)

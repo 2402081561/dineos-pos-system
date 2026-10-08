@@ -1,3 +1,6 @@
+import { cartLineId, moveCartQuantity } from '../../utils/cartOrderType'
+import OrderTypeSelector from '../../components/common/OrderTypeSelector'
+import OrderTypeBadge from '../../components/common/OrderTypeBadge'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import Button from '../../components/common/Button'
@@ -7,7 +10,9 @@ import { createSupabaseCashierOrder, getSupabaseCashierOrderSetup } from '../../
 import { formatCurrency } from '../../utils/currency'
 import { getImageSource, useImageFallback } from '../../utils/image'
 
-const roundMoney = (value) => Math.round((value + Number.EPSILON) * 100) / 100
+import CounterOptionsDialog from '../../components/cashier/CounterOptionsDialog'
+import OptionSummary from '../../components/common/OptionSummary'
+import { orderAmounts, resolveOptions, roundMoney } from '../../../server/src/posRules'
 
 function NewOrder() {
   const [searchParams] = useSearchParams()
@@ -20,6 +25,7 @@ function NewOrder() {
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('All')
   const [cart, setCart] = useState({})
+  const [optionItem, setOptionItem] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [placedOrder, setPlacedOrder] = useState(null)
   const requestId = useRef(null)
@@ -52,20 +58,48 @@ function NewOrder() {
     const matchesSearch = item.name.toLocaleLowerCase().includes(search.toLocaleLowerCase().trim())
     return matchesCategory && matchesSearch
   })
-  const cartItems = menu.filter((item) => cart[item.id]?.quantity > 0).map((item) => ({ ...item, ...cart[item.id] }))
   const validPrice = (price) => price !== null && price !== undefined && String(price).trim() !== '' && Number.isFinite(Number(price)) && Number(price) >= 0 && Number(price) <= 999999.99
-  const hasInvalidItems = Object.keys(cart).some((id) => !menu.some((item) => item.id === id && item.isAvailable === true && validPrice(item.price) && cart[id]?.quantity > 0 && cart[id]?.quantity <= 50))
+  const cartItems = Object.entries(cart).map(([lineId, line]) => {
+    const item = menu.find((entry) => entry.id === (line.menuItemId ?? lineId))
+    let options, invalid = !item || !item.isAvailable || !validPrice(item.price) || line.quantity < 1 || line.quantity > 50
+    try { options = resolveOptions(item?.optionGroups ?? [], line.selections ?? []) } catch { invalid = true }
+    return { ...item, ...line, id: lineId, menuItemId: item?.id ?? line.menuItemId ?? lineId, orderType: line.orderType ?? 'dine_in', price: roundMoney(Number(item?.price) + (options?.extraPrice ?? 0)), optionSnapshot: options?.optionSnapshot ?? line.optionSnapshot, invalid }
+  })
+  const hasInvalidItems = cartItems.some((item) => item.invalid)
   const subtotal = hasInvalidItems ? null : roundMoney(cartItems.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0))
-  const serviceCharge = subtotal === null ? null : roundMoney(subtotal * 0.1)
-  const sst = subtotal === null ? null : roundMoney(subtotal * 0.06)
-  const total = subtotal === null ? null : roundMoney(subtotal + serviceCharge + sst)
+  let amounts
+  try { if (subtotal !== null) amounts = orderAmounts(subtotal, setup?.settings) } catch { /* blocks sending an oversized bill */ }
+  const serviceCharge = amounts?.serviceCharge ?? null
+  const sst = amounts?.sst ?? null
+  const total = amounts?.grandTotal ?? null
+  function addOptionLine(item, options) {
+    const id = cartLineId(item.id, '', options.selections)
+    setCart((current) => ({ ...current, [id]: { ...current[id], menuItemId: item.id, orderType: 'dine_in', selections: options.selections, optionSnapshot: options.optionSnapshot, name: item.name, notes: current[id]?.notes ?? '', quantity: Math.min(50, (current[id]?.quantity ?? 0) + 1) } }))
+    requestId.current = null; setSubmitError('')
+  }
 
-  function updateCart(itemId, quantity) {
+  function addMenuItem(item) {
+    const id = cartLineId(item.id, '', [])
+    updateCart(id, (cart[id]?.quantity ?? 0) + 1, item)
+  }
+  function removeMenuItem(item) {
+    const line = cartItems.find((line) => line.menuItemId === item.id && line.orderType === 'dine_in') ?? cartItems.find((line) => line.menuItemId === item.id)
+    if (line) updateCart(line.id, line.quantity - 1)
+  }
+  function changeType(item, type, quantity = item.quantity) {
+    const lines = Object.entries(cart).map(([id, line]) => ({ ...line, cartItemId: id, menuItemId: line.menuItemId ?? id, specialInstructions: line.notes ?? '' }))
+    const result = moveCartQuantity(lines, item.id, quantity, type)
+    if (result.error) { setSubmitError(result.error); return }
+    setCart(Object.fromEntries(result.items.map((line) => [line.cartItemId, { ...line, notes: line.specialInstructions }])))
+    requestId.current = null; setSubmitError('')
+  }
+
+  function updateCart(itemId, quantity, menuItem) {
     if (submitting.current) return
     setCart((current) => {
       const next = { ...current }
       if (quantity <= 0) delete next[itemId]
-      else next[itemId] = { quantity: Math.min(quantity, 50), notes: current[itemId]?.notes ?? '', name: menu.find((item) => item.id === itemId)?.name ?? current[itemId]?.name ?? 'Menu item' }
+      else next[itemId] = { ...current[itemId], menuItemId: current[itemId]?.menuItemId ?? menuItem?.id, selections: current[itemId]?.selections ?? [], orderType: current[itemId]?.orderType ?? 'dine_in', quantity: Math.min(quantity, 50), notes: current[itemId]?.notes ?? '', name: menuItem?.name ?? menu.find((item) => item.id === itemId)?.name ?? current[itemId]?.name ?? 'Menu item' }
       return next
     })
     requestId.current = null
@@ -90,8 +124,9 @@ function NewOrder() {
         tableId: selectedTable.id,
         expectedTableSessionId: selectedTable.tableSessionId,
         customerNickname,
-        items: cartItems.map((item) => ({ menuItemId: item.id, quantity: item.quantity, notes: item.notes })),
+        items: cartItems.map((item) => ({ menuItemId: item.menuItemId, quantity: item.quantity, orderType: item.orderType, notes: item.notes, selections: item.selections ?? [] })),
         requestId: requestId.current,
+        settingsRevision: setup.settingsRevision,
       })
       setPlacedOrder({ ...result.order, tableNumber: selectedTable.tableNumber })
       setCart({})
@@ -106,33 +141,66 @@ function NewOrder() {
 
   if (placedOrder) return <div className="mx-auto max-w-xl space-y-6">
     <SectionHeading eyebrow="Cashier POS" title="Order sent to kitchen" description={`Table ${placedOrder.tableNumber} · Order ${placedOrder.tableOrderNumber ?? 'received'}`} />
-    <div className="surface-card p-6"><p className="text-sm text-slate-600">The kitchen can now prepare this order. Payment remains pending until it has been served.</p><p className="mt-4 text-xl font-bold text-orange-600">{formatCurrency(placedOrder.grandTotal)}</p></div>
-    <div className="flex flex-wrap gap-3"><Button onClick={() => { setPlacedOrder(null); setCustomerNickname(''); void loadSetup() }}>Another order</Button><Link className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold" to="/cashier">Back to dashboard</Link></div>
+    <div className="surface-card p-6"><OrderTypeBadge orderType={placedOrder.orderType} /><p className="text-sm text-slate-600">The kitchen can now prepare this order. Payment remains pending until it has been served.</p><p className="mt-4 text-xl font-bold text-orange-600">{formatCurrency(placedOrder.grandTotal)}</p></div>
+    <div className="flex flex-wrap gap-3"><Button onClick={() => { setPlacedOrder(null); setCustomerNickname(''); void loadSetup() }}>Another order</Button><Link className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold" to={selectedTableId ? `/cashier?tableId=${encodeURIComponent(selectedTableId)}` : "/cashier"}>Back to dashboard</Link></div>
   </div>
 
-  return <div className="space-y-6">
-    <SectionHeading eyebrow="Cashier POS" title="New counter order" description="Select a table, add dishes and send the order to the kitchen." action={<Link className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold" to="/cashier">Back to dashboard</Link>} />
-    {loadError && <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{loadError} <button className="ml-2 font-bold underline" onClick={() => void loadSetup()} type="button">Retry</button></div>}
-    {setup && <div className="flex justify-end"><button className="text-sm font-semibold text-orange-700 underline disabled:opacity-50" disabled={isLoading || isSubmitting} onClick={() => void loadSetup()} type="button">{isLoading ? 'Refreshing...' : 'Refresh tables & menu'}</button></div>}
-    {isLoading && !setup ? <StatePanel title="Loading tables and menu" description="Please wait a moment." /> : !setup ? null : <form className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]" onSubmit={placeOrder}>
-      <div className="space-y-5">
-        <section className="surface-card p-5"><h2 className="text-lg font-bold">1. Select table</h2><label className="mt-4 block text-sm font-semibold" htmlFor="counter-table">Table</label><select id="counter-table" className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3" disabled={isSubmitting} required value={selectedTableId} onChange={(event) => { setSelectedTableId(event.target.value); requestId.current = null; setSubmitError('') }}><option value="">Choose a table</option>{setup.tables.map((table) => <option key={table.id} value={table.id}>Table {table.tableNumber}</option>)}</select>{setup.tables.length === 0 && <p className="mt-3 text-sm text-slate-500">No enabled tables are available.</p>}</section>
-        <section className="surface-card p-5"><h2 className="text-lg font-bold">2. Add dishes</h2><input aria-label="Search menu" className="mt-4 w-full rounded-xl border border-slate-200 p-3" onChange={(event) => setSearch(event.target.value)} placeholder="Search dishes or drinks" type="search" value={search} /><div className="mt-3 flex flex-wrap gap-2">{categories.map((name) => <button aria-pressed={category === name} className={`max-w-full break-words rounded-full px-3 py-2 text-sm font-semibold ${category === name ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-600'}`} key={name} onClick={() => setCategory(name)} type="button">{name}</button>)}</div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">{filtered.map((item) => {
-            const quantity = cart[item.id]?.quantity ?? 0
-            const available = item.isAvailable === true && validPrice(item.price)
-            return <article className="flex min-w-0 gap-3 rounded-2xl border border-slate-100 p-3" key={item.id}><img alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover" loading="lazy" onError={useImageFallback} src={getImageSource(item.imageUrl)} /><div className="min-w-0 flex-1"><h3 className="break-words text-sm font-bold">{item.name}</h3><p className="mt-1 text-sm text-orange-600">{available ? formatCurrency(item.price) : 'Sold out / unavailable'}</p><div className="mt-2 flex items-center gap-2"><button aria-label={`Remove one ${item.name}`} className="h-8 w-8 rounded-lg bg-slate-100 font-bold disabled:opacity-40" disabled={isSubmitting || quantity === 0} onClick={() => updateCart(item.id, quantity - 1)} type="button">−</button><span className="min-w-5 text-center text-sm font-bold">{quantity}</span><button aria-label={`Add one ${item.name}`} className="h-8 w-8 rounded-lg bg-orange-600 font-bold text-white disabled:opacity-40" disabled={isSubmitting || !available || quantity >= 50 || (quantity === 0 && Object.keys(cart).length >= 30)} onClick={() => updateCart(item.id, quantity + 1)} type="button">+</button></div></div></article>
-          })}</div>{filtered.length === 0 && <p className="mt-4 text-sm text-slate-500">No matching dishes.</p>}</section>
+  return <div className="space-y-4">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div><h1 className="text-xl font-bold tracking-tight text-slate-900">New counter order</h1><p className="mt-1 text-xs text-slate-500">Select a table, add dishes and send the order to the kitchen.</p></div>
+      <div className="flex flex-wrap items-center gap-3">
+        {setup && <button className="text-xs font-semibold text-orange-700 underline underline-offset-4 disabled:opacity-50" disabled={isLoading || isSubmitting} onClick={() => void loadSetup()} type="button">{isLoading ? 'Refreshing...' : 'Refresh tables & menu'}</button>}
+        <Link className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:border-orange-200 hover:text-orange-700" to={selectedTableId ? `/cashier?tableId=${encodeURIComponent(selectedTableId)}` : "/cashier"}>Back to dashboard</Link>
       </div>
-      <aside className="surface-card p-5 lg:sticky lg:top-24"><h2 className="text-lg font-bold">3. Review order</h2><p className="mt-1 text-sm text-slate-500">{selectedTable ? `Table ${selectedTable.tableNumber}` : 'Choose a table first'}</p><label className="mt-4 block text-sm font-semibold" htmlFor="counter-name">Customer name <span className="font-normal text-slate-500">(optional)</span></label><input id="counter-name" className="mt-2 w-full rounded-xl border border-slate-200 p-3" disabled={isSubmitting} maxLength={80} onChange={(event) => { setCustomerNickname(event.target.value); requestId.current = null }} placeholder="Guest" value={customerNickname} />
-        <div className="mt-5 space-y-3">{cartItems.map((item) => <div className="rounded-xl border border-slate-100 p-3" key={item.id}><div className="flex justify-between gap-2 text-sm"><strong className="min-w-0 break-words">{item.quantity} × {item.name}</strong><span className="shrink-0">{formatCurrency(Number(item.price) * item.quantity)}</span></div><input aria-label={`Note for ${item.name}`} className="mt-2 w-full rounded-lg border border-slate-200 p-2 text-xs" disabled={isSubmitting} maxLength={500} onChange={(event) => updateNotes(item.id, event.target.value)} placeholder="Kitchen note (optional)" value={item.notes} /></div>)}{Object.entries(cart).filter(([id]) => !menu.some((item) => item.id === id)).map(([id, item]) => <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm" key={id}><strong>{item.name} is no longer on the menu.</strong><button className="mt-2 block text-red-700 underline" disabled={isSubmitting} onClick={() => updateCart(id, 0)} type="button">Remove item</button></div>)}</div>
-        {cartItems.length === 0 && <p className="mt-5 text-sm text-slate-500">No dishes selected yet.</p>}
-        <dl className="mt-5 space-y-2 border-t border-slate-100 pt-4 text-sm"><div className="flex justify-between"><dt>Subtotal</dt><dd>{subtotal === null ? '—' : formatCurrency(subtotal)}</dd></div><div className="flex justify-between"><dt>Service charge (10%)</dt><dd>{serviceCharge === null ? '—' : formatCurrency(serviceCharge)}</dd></div><div className="flex justify-between"><dt>SST (6%)</dt><dd>{sst === null ? '—' : formatCurrency(sst)}</dd></div><div className="flex justify-between border-t border-slate-100 pt-3 text-base font-bold"><dt>Total</dt><dd>{total === null ? '—' : formatCurrency(total)}</dd></div></dl>
-        {hasInvalidItems && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">A dish is unavailable or invalid. Remove it, then review the order.</p>}
-        {submitError && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{submitError} <button className="mt-2 block font-bold underline" disabled={isLoading} onClick={() => void loadSetup()} type="button">Refresh and review</button></p>}
-        <Button className="mt-5 w-full" disabled={isSubmitting || isLoading || !selectedTable || cartItems.length === 0 || hasInvalidItems || !Number.isFinite(total)} type="submit">{isSubmitting ? 'Sending order...' : 'Send to kitchen'}</Button><p className="mt-2 text-xs text-slate-500">Menu availability and prices are checked again when you send the order.</p>
+    </div>
+    {loadError && <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{loadError} <button className="ml-2 font-bold underline" onClick={() => void loadSetup()} type="button">Retry</button></div>}
+    {isLoading && !setup ? <StatePanel title="Loading tables and menu" description="Please wait a moment." /> : !setup ? null : <form className="grid min-w-0 gap-4 lg:h-[calc(100dvh-11.5rem)] lg:min-h-[32rem] lg:grid-cols-[minmax(0,1fr)_320px]" onSubmit={placeOrder}>
+      <section aria-label="Counter menu" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm">
+        <div className="shrink-0 border-b border-slate-100 p-3 sm:p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-bold">Menu</h2>
+            <div className="relative w-full sm:w-64"><span aria-hidden="true" className="pointer-events-none absolute left-3 top-2.5 text-slate-400">⌕</span><input aria-label="Search menu" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm" onChange={(event) => setSearch(event.target.value)} placeholder="Search dishes or drinks" type="search" value={search} /></div>
+          </div>
+          <div aria-label="Menu categories" className="mt-3 flex flex-wrap gap-1.5">{categories.map((name) => <button aria-pressed={category === name} className={`max-w-full break-words rounded-lg px-3 py-2 text-xs font-semibold transition ${category === name ? 'bg-orange-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-orange-50 hover:text-orange-700'}`} key={name} onClick={() => setCategory(name)} type="button">{name}</button>)}</div>
+        </div>
+        <div aria-label="Menu dishes" className="min-h-0 p-3 sm:p-4 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{filtered.map((item) => {
+            const quantity = cartItems.filter((line) => line.menuItemId === item.id).reduce((sum, line) => sum + line.quantity, 0)
+            const available = item.isAvailable === true && validPrice(item.price)
+            return <article className={`flex min-w-0 flex-col overflow-hidden rounded-xl border bg-white transition ${quantity > 0 ? 'border-orange-300 ring-1 ring-orange-100' : 'border-slate-200/70'}`} key={item.id}>
+              <div className="relative p-1.5"><img alt="" className={`aspect-[4/3] w-full rounded-lg object-cover ${available ? '' : 'opacity-50'}`} loading="lazy" onError={useImageFallback} src={getImageSource(item.imageUrl)} />{quantity > 0 && <span className="absolute right-3 top-3 flex h-6 min-w-6 items-center justify-center rounded-full bg-orange-600 px-1.5 text-xs font-bold text-white">{quantity}</span>}</div>
+              <div className="flex flex-1 flex-col px-3 pb-3 pt-1"><p className="mb-1 truncate text-[10px] font-medium text-slate-400" title={item.categoryName || 'Other'}>{item.categoryName || 'Other'}</p><h3 className="break-words text-sm font-semibold leading-5 text-slate-900">{item.name}</h3><p className={`mt-2 text-sm font-semibold ${available ? 'text-orange-600' : 'text-red-600'}`}>{available ? formatCurrency(item.price) : 'Sold out / unavailable'}</p></div>
+              {item.optionGroups?.length ? <Button className="m-2 text-xs" disabled={isSubmitting || !available || Object.keys(cart).length >= 30} variant="outline" onClick={() => setOptionItem(item)}>Choose options</Button> : <div className="flex items-center justify-between border-t border-slate-100 px-3 py-2"><button aria-label={`Remove one ${item.name}`} className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-lg font-bold text-slate-600 hover:bg-slate-200 disabled:opacity-40" disabled={isSubmitting || quantity === 0} onClick={() => removeMenuItem(item)} type="button">−</button><span className="min-w-5 text-center text-sm font-bold tabular-nums">{quantity}</span><button aria-label={`Add one ${item.name}`} className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-600 text-lg font-bold text-white hover:bg-orange-700 disabled:opacity-40" disabled={isSubmitting || !available || quantity >= 50 || (quantity === 0 && Object.keys(cart).length >= 30)} onClick={() => addMenuItem(item)} type="button">+</button></div>}
+            </article>
+          })}</div>{filtered.length === 0 && <p className="py-10 text-center text-sm text-slate-500">No matching dishes.</p>}
+        </div>
+      </section>
+      <aside aria-label="Order summary" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm">
+        <div className="shrink-0 border-b border-slate-100 p-4">
+          <h2 className="text-lg font-bold">Order summary</h2>
+          <label className="mt-3 block text-xs font-semibold text-slate-600" htmlFor="counter-table">Table</label>
+          <select id="counter-table" className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" disabled={isSubmitting} required value={selectedTableId} onChange={(event) => { setSelectedTableId(event.target.value); requestId.current = null; setSubmitError('') }}><option value="">Choose a table</option>{setup.tables.map((table) => <option key={table.id} value={table.id}>Table {table.tableNumber}</option>)}</select>
+          {setup.tables.length === 0 && <p className="mt-2 text-xs text-slate-500">No enabled tables are available.</p>}
+          <p className="mt-3 text-xs text-slate-500">Choose Dine in or Take away separately for each dish below.</p>
+          <label className="mt-3 block text-xs font-semibold text-slate-600" htmlFor="counter-name">Customer name <span className="font-normal text-slate-400">(optional)</span></label><input id="counter-name" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" disabled={isSubmitting} maxLength={80} onChange={(event) => { setCustomerNickname(event.target.value); requestId.current = null }} placeholder="Guest" value={customerNickname} />
+        </div>
+        <div aria-label="Selected dishes" className="min-h-0 p-4 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
+          <div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-bold">Order items</h3><span className="rounded-full bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700">{selectedTable ? `Table ${selectedTable.tableNumber}` : 'No table'}</span></div>
+          <div className="space-y-3">{cartItems.map((item) => <div className="rounded-xl border border-slate-100 p-2.5" key={item.id}>
+            <div className="flex items-start gap-2.5"><img alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" loading="lazy" onError={useImageFallback} src={getImageSource(item.imageUrl)} /><div className="min-w-0 flex-1"><strong className="block break-words text-xs leading-5">{item.quantity} × {item.name}</strong><span className="mt-1 block text-xs font-semibold text-orange-700">{formatCurrency(Number(item.price) * item.quantity)}</span><OptionSummary item={item} /></div></div><div className="mt-2 flex items-center gap-2"><button aria-label={`Decrease ${item.name}`} className="h-7 w-7 rounded bg-slate-100 font-bold" disabled={isSubmitting} type="button" onClick={() => updateCart(item.id, item.quantity - 1)}>−</button><span className="text-xs">{item.quantity}</span><button aria-label={`Increase ${item.name}`} className="h-7 w-7 rounded bg-orange-50 font-bold text-orange-700" disabled={isSubmitting || item.quantity >= 50} type="button" onClick={() => updateCart(item.id, item.quantity + 1)}>+</button><button className="ml-auto text-xs text-red-600" disabled={isSubmitting} type="button" onClick={() => updateCart(item.id, 0)}>Remove</button></div>
+            <OrderTypeSelector compact value={item.orderType} onChange={(type) => changeType(item, type)} disabled={isSubmitting} />{item.quantity > 1 && <button className="mt-2 rounded border border-orange-200 p-2 text-xs font-bold text-orange-700" disabled={isSubmitting} type="button" onClick={() => changeType(item, item.orderType === "take_away" ? "dine_in" : "take_away", 1)}>{item.orderType === "take_away" ? "Dine in 1 separately" : "Pack 1 separately"}</button>}<input aria-label={`Note for ${item.name}`} className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs" disabled={isSubmitting} maxLength={500} onChange={(event) => updateNotes(item.id, event.target.value)} placeholder="Kitchen note (optional)" value={item.notes} />
+          </div>)}{Object.entries(cart).filter(([id, line]) => !menu.some((item) => item.id === (line.menuItemId ?? id))).map(([id, item]) => <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm" key={id}><strong>{item.name} is no longer on the menu.</strong><button className="mt-2 block text-red-700 underline" disabled={isSubmitting} onClick={() => updateCart(id, 0)} type="button">Remove item</button></div>)}</div>
+          {cartItems.length === 0 && <div className="py-6 text-center"><span aria-hidden="true" className="text-2xl text-slate-300">⌑</span><p className="mt-2 text-xs text-slate-500">No dishes selected yet.</p></div>}
+          {hasInvalidItems && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">A dish is unavailable or invalid. Remove it, then review the order.</p>}
+          {submitError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{submitError} <button className="mt-2 block font-bold underline" disabled={isLoading} onClick={() => void loadSetup()} type="button">Refresh and review</button></p>}
+        </div>
+        <div className="shrink-0 border-t border-slate-100 bg-slate-50/50 p-4">
+          <dl className="space-y-2 text-xs text-slate-600"><div className="flex justify-between gap-2"><dt>Subtotal</dt><dd className="tabular-nums">{subtotal === null ? '—' : formatCurrency(subtotal)}</dd></div><div className="flex justify-between gap-2"><dt>Service charge ({setup.settings?.serviceChargeRate ?? 10}%)</dt><dd className="tabular-nums">{serviceCharge === null ? '—' : formatCurrency(serviceCharge)}</dd></div><div className="flex justify-between gap-2"><dt>SST ({setup.settings?.sstRate ?? 6}%)</dt><dd className="tabular-nums">{sst === null ? '—' : formatCurrency(sst)}</dd></div><div className="flex justify-between gap-2 border-t border-slate-200/70 pt-3 text-base font-bold text-slate-900"><dt>Total</dt><dd className="text-orange-600 tabular-nums">{total === null ? '—' : formatCurrency(total)}</dd></div></dl>
+          <Button className="mt-4 w-full" disabled={isSubmitting || isLoading || !selectedTable || cartItems.length === 0 || hasInvalidItems || !Number.isFinite(total)} type="submit">{isSubmitting ? 'Sending order...' : 'Send to kitchen'}</Button><p className="mt-2 text-[10px] leading-4 text-slate-400">Menu availability and prices are checked again when you send the order.</p>
+        </div>
       </aside>
     </form>}
+    {optionItem && <CounterOptionsDialog item={optionItem} onClose={() => setOptionItem(null)} onAdd={addOptionLine} />}
   </div>
 }
 

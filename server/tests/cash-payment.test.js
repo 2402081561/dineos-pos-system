@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { cashTenderInCents } from '../src/cashTender.js'
+import { allocateBill, PosValidationError } from '../src/posRules.js'
+import { paymentPlan, selectPaymentOrders } from '../src/paymentSelection.js'
+import { createHash } from 'node:crypto'
 import { cashierBillTotal, getCashPayment, moneyToCents } from '../../src/utils/cashPayment.js'
 import { getReceiptDetails } from '../../src/utils/receipt.js'
 
@@ -68,7 +71,8 @@ async function paymentRequest(body, { status = 'served', paymentStatus = 'pendin
   const client = {
     async query(sql, values) {
       queries.push({ sql, values })
-      if (sql.includes('FOR UPDATE OF orders')) return { rows: [{ id: orderId, tableSessionId: 'session', tableId: 'table', tableNumber: 1, status, paymentStatus, subtotal: '5.00', memberId: null }] }
+      if (sql.includes('FOR UPDATE OF orders')) return { rows: [{ id: orderId, version: 1, tableSessionId: 'session', tableId: 'table', tableNumber: 1, status, paymentStatus, subtotal: '5.00', memberId: null }] }
+      if (sql.includes('FROM order_items WHERE order_id')) return { rows: [{ id: orderId, name: 'Tea', price: '5.00', quantity: 1, paidQuantity: 0 }] }
       if (sql.includes('INSERT INTO receipt_sequences')) return { rows: [{ last_number: 1 }] }
       if (sql.includes('INSERT INTO payments')) return { rows: [{ id: 'payment', receiptNumber: values[0], amount: String(values[4]), cashReceived: values[5], changeAmount: values[6], paidAt: new Date() }] }
       return { rows: [] }
@@ -81,6 +85,8 @@ async function paymentRequest(body, { status = 'served', paymentStatus = 'pendin
     uuid: /^[0-9a-f-]{36}$/i,
     paymentMethods: new Set(['Cash', 'Credit/Debit Card', "Touch 'n Go", 'GrabPay', 'FPX', 'Other']),
     cashTenderInCents,
+    allocateBill,
+    paymentPlan, selectPaymentOrders, createHash, PosValidationError,
     pool: { connect: async () => client },
     money: Number,
     roundMoney: (value) => Math.round((value + Number.EPSILON) * 100) / 100,
@@ -89,7 +95,7 @@ async function paymentRequest(body, { status = 'served', paymentStatus = 'pendin
   })
   let code, result
   const response = { status(value) { code = value; return this }, json(value) { result = value; return this } }
-  await handler({ body: { orderIds: [orderId], paymentMethod: 'Cash', ...body }, user: { id: 'cashier' } }, response, (error) => { throw error })
+  await handler({ body: { requestId: orderId, selections: [{ itemId: orderId, quantity: 1 }], versions: { [orderId]: 1 }, orderIds: [orderId], paymentMethod: 'Cash', ...body }, user: { id: 'cashier' } }, response, (error) => { throw error })
   return { code, result, queries }
 }
 
@@ -132,10 +138,18 @@ test('non-cash methods do not require or save cash tender', async () => {
   }
 })
 
-test('already paid or non-served orders cannot create a payment', async () => {
-  for (const state of [{ paymentStatus: 'paid' }, { status: 'ready' }]) {
+test('already paid or cancelled orders cannot create a payment', async () => {
+  for (const state of [{ paymentStatus: 'paid' }, { status: 'cancelled' }]) {
     const result = await paymentRequest({ cashReceived: '10' }, state)
     assert.equal(result.code, 409)
     assert.ok(!result.queries.some(({ sql }) => sql.includes('INSERT INTO payments')))
+  }
+})
+
+test('payment is permitted before serving and does not change fulfilment', async () => {
+  for (const status of ['received', 'preparing', 'ready']) {
+    const result = await paymentRequest({ cashReceived: '10' }, { status })
+    assert.equal(result.code, 201)
+    assert.ok(!result.queries.some(({ sql }) => /SET status|fulfilled_quantity\s*=/.test(sql)))
   }
 })

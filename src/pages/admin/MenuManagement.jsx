@@ -60,7 +60,7 @@ function MenuManagement() {
       setEditingItem(null)
     } catch (firebaseError) {
       console.error('[Menu Management] Failed to save food:', firebaseError)
-      setActionError('We could not save this food item. Please try again.')
+      setActionError(firebaseError.message || 'We could not save this food item. Please try again.')
     } finally {
       setIsSubmitting(false)
       setUploadProgress(0)

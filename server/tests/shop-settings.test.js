@@ -60,9 +60,12 @@ function fixture({ name = 'DineOS', failDatabase = false, failAudit = false } = 
   }
 }
 
-test('public reads expose only the display name and disable caching', async () => {
+test('public reads expose shop display/configuration fields and disable caching', async () => {
   const result = await fixture().request('GET', '/api/v1/public/shop-settings')
-  assert.deepEqual(result.data, { settings: { name: 'DineOS' } })
+  assert.equal(result.data.settings.name, 'DineOS')
+  assert.equal(result.data.settings.config.serviceChargeRate, 10)
+  assert.equal(result.data.settings.isAcceptingOrders, true)
+  assert.deepEqual(Object.keys(result.data.settings).sort(), ['config', 'isAcceptingOrders', 'name', 'orderingMessage', 'revision'].sort())
   assert.equal(result.headers['Cache-Control'], 'no-store')
 })
 
@@ -121,7 +124,10 @@ test('missing singleton reports unavailable; migration locks down browser access
 
 test('payments snapshot the DB name; receipt read retains snapshot and receipt identity', () => {
   const payment = source.slice(source.indexOf("app.post('/api/v1/cashier/payments'"), source.indexOf("app.get('/api/v1/cashier/receipts/:receiptNumber'"))
-  assert.match(payment, /restaurant_name\) VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \(SELECT name FROM shop_settings WHERE id = 1\)\)/)
+  assert.match(payment, /restaurant_name, shop_snapshot/)
+  assert.match(payment, /SELECT name FROM shop_settings WHERE id = 1/)
+  assert.match(payment, /jsonb_build_object/)
+  assert.match(payment, /config FROM shop_settings WHERE id = 1/)
   const receipt = source.slice(source.indexOf("app.get('/api/v1/cashier/receipts/:receiptNumber'"), source.indexOf("app.post('/api/v1/cashier/receipts/:receiptNumber/reprint'"))
   assert.match(receipt, /payments.restaurant_name AS "restaurantName"/)
   assert.match(receipt, /payments.receipt_number = \$1/)

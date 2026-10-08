@@ -1,3 +1,6 @@
+import { sameTableStyle, tableStyle, validTableStyle } from './tableAppearance.js'
+import { samePoint, validPoint } from './freeFloorLayout.js'
+
 export const FLOOR_COLUMNS = 8
 export const FLOOR_MAX_ROWS = 50
 
@@ -22,6 +25,17 @@ export function validateFloorLayoutUpdate(input, currentTables) {
       throw new FloorLayoutValidationError('Every table must be placed on the floor grid.')
     }
     const current = currentById.get(position.tableId)
+    if (position.point !== undefined) {
+      if (!validPoint(position.point)) throw new FloorLayoutValidationError('Place every table inside the floor plan.')
+      if (!samePoint(position.expectedPoint, current.floorPoint)) throw new FloorLayoutConflictError('Table positions changed. Reload before saving.')
+    } else if (current.floorPoint != null) {
+      throw new FloorLayoutConflictError('This floor plan uses free positions. Reload with the latest app before editing.')
+    }
+    const style = position.style === undefined ? tableStyle(current.floorStyle) : position.style
+    if (!validTableStyle(style)) throw new FloorLayoutValidationError('Choose a valid table shape, size and direction.')
+    if (position.style !== undefined && (!validTableStyle(position.expectedStyle) || !sameTableStyle(position.expectedStyle, current.floorStyle))) {
+      throw new FloorLayoutConflictError('The table appearance changed. Reload the floor plan before saving.')
+    }
     // Older clients can still save coordinates without erasing an existing area.
     const zone = position.zone === undefined ? current.floorZone ?? 'Main hall' : position.zone
     if (typeof zone !== 'string' || !zone.trim() || zone.trim().length > 40 || /\p{Cc}/u.test(zone)) {
@@ -34,7 +48,7 @@ export function validateFloorLayoutUpdate(input, currentTables) {
     }
     seenIds.add(position.tableId)
     seenCells.add(cell)
-    normalized.push({ tableId: position.tableId, x: position.x, y: position.y, zone: zone.trim() })
+    normalized.push({ tableId: position.tableId, x: position.x, y: position.y, zone: zone.trim(), style, ...(position.point !== undefined ? { point: position.point } : {}) })
   }
   return normalized
 }

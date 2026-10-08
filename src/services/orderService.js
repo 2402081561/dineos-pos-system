@@ -1,4 +1,5 @@
 import { cancelCustomerOrder as cancelCustomerOrderRequest, getCustomerOrders, placeCustomerOrder } from './customerApi'
+import { resolveOptions } from '../../server/src/posRules'
 
 function finiteNonNegative(value) {
   const number = Number(value)
@@ -42,18 +43,20 @@ export function getCartValidationIssues(cartItems, menuItems) {
     const quantity = Number(cartItem?.quantity)
     const currentMenuItem = currentMenuById.get(cartItem?.menuItemId)
     if (!cartItem?.menuItemId || !currentMenuItem) return [{ cartItemId: cartItem?.cartItemId, message: `${label} is no longer on the menu.` }]
-    if (!Number.isInteger(quantity) || quantity < 1) return [{ cartItemId: cartItem.cartItemId, message: `${label} has an invalid quantity.` }]
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 50) return [{ cartItemId: cartItem.cartItemId, message: `${label} has an invalid quantity.` }]
     if (!String(currentMenuItem.name ?? '').trim()) return [{ cartItemId: cartItem.cartItemId, message: `${label} has incomplete menu information.` }]
     if (currentMenuItem.isAvailable !== true) return [{ cartItemId: cartItem.cartItemId, message: `${currentMenuItem.name} is no longer available.` }]
     if (finiteNonNegative(currentMenuItem.price) === null) return [{ cartItemId: cartItem.cartItemId, message: `${currentMenuItem.name} has an invalid price and cannot be ordered.` }]
+    try { resolveOptions(currentMenuItem.optionGroups ?? [], cartItem.selections ?? []) }
+    catch (error) { return [{ cartItemId: cartItem.cartItemId, message: `${label}: ${error.message}` }] }
     return []
   })
 }
 
-export async function createOrder({ cartItems, session }) {
+export async function createOrder({ cartItems, session, requestId, settingsRevision, orderType }) {
   if (!session?.sessionId) throw new Error('Join an active table session before placing an order.')
-  const items = (cartItems ?? []).map((item) => ({ menuItemId: item?.menuItemId, quantity: item?.quantity, notes: item?.specialInstructions }))
-  return placeCustomerOrder(session.sessionId, items)
+  const items = (cartItems ?? []).map((item) => ({ menuItemId: item?.menuItemId, quantity: item?.quantity, orderType: item?.orderType ?? 'dine_in', notes: item?.specialInstructions, selections: item?.selections ?? [] }))
+  return placeCustomerOrder(session.sessionId, items, requestId, settingsRevision, orderType)
 }
 
 export function subscribeToCustomerOrders(session, onOrdersUpdate, onError) {

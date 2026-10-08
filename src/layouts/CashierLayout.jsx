@@ -1,5 +1,6 @@
 import PortalLayout from '../components/common/PortalLayout'
 import useAdminAuth from '../hooks/useAdminAuth'
+import { useLocation } from 'react-router-dom'
 
 const cashierNavigation = [
   { end: true, label: 'Dashboard', to: '/cashier' },
@@ -10,11 +11,12 @@ const cashierNavigation = [
 
 function CashierLayout() {
   const { authUser } = useAdminAuth()
+  const { pathname } = useLocation()
   const navigation = authUser?.role === 'admin'
     ? [{ label: '← Back to Admin', to: '/admin/dashboard' }, ...cashierNavigation]
     : cashierNavigation
 
-  return <PortalLayout area="Cashier" navigation={navigation} />
+  return <PortalLayout area="Cashier" navigation={navigation} wideWorkspace={pathname === '/cashier/new-order'} />
 }
 
 export default CashierLayout

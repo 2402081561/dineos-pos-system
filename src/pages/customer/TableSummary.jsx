@@ -1,3 +1,5 @@
+import OrderTypeBadge from '../../components/common/OrderTypeBadge'
+import OptionSummary from '../../components/common/OptionSummary'
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { useState } from 'react'
 import Button from '../../components/common/Button'
@@ -5,6 +7,7 @@ import SectionHeading from '../../components/common/SectionHeading'
 import StatePanel from '../../components/common/StatePanel'
 import useTableSummary from '../../hooks/useTableSummary'
 import { formatCurrency } from '../../utils/currency'
+import { unpaidOrderItems } from '../../utils/customerOrder'
 
 function getInitials(name) {
   return String(name ?? 'Guest')
@@ -109,6 +112,8 @@ function TableSummary() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="truncate font-bold text-slate-900">{participant.customerNickname}</h3>
+                        {Number(participant.takeAwayOrderCount) > 0 && <OrderTypeBadge orderType="take_away" />}
+                        {Number(participant.dineInOrderCount) > 0 && <OrderTypeBadge orderType="dine_in" />}
                         {participant.isCounterOrder && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-600">{t("Counter order")}</span>}
                         {isOwnOrder && <span className="rounded-full bg-orange-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-orange-700">{t("You")}</span>}
                       </div>
@@ -134,12 +139,13 @@ function TableSummary() {
                               <p className="py-2 text-sm text-slate-500">{t("You have not placed an order yet.")}</p>
                             ) : (
                               participant.orders.flatMap((order) =>
-                                order.items?.map((item, index) => (
+                                unpaidOrderItems(order).map((item, index) => (
                                   <div className="flex items-start justify-between gap-4 py-3" key={`${order.id}-${item.menuItemId}-${index}`}>
                                     <div>
                                       <p className="text-sm font-semibold text-slate-800">
                                         {item.quantity}× {item.name}
                                       </p>
+                                      <OptionSummary item={{ ...item, orderType: item.orderType ?? order.orderType }} />
                                       {item.notes && <p className="mt-1 text-xs text-slate-500">{t("Note:")}{' '}{item.notes}</p>}
                                     </div>
                                     <span className="whitespace-nowrap text-sm font-bold text-slate-700">{formatCurrency(Number(item.price) * Number(item.quantity))}</span>

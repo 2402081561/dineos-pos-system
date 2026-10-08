@@ -1,21 +1,9 @@
 import PortalLayout from '../components/common/PortalLayout'
 
-const navigation = [
-  { label: 'Dashboard', to: '/admin/dashboard' },
-  { label: 'Cashier', to: '/cashier' },
-  { label: 'Menu', to: '/admin/menu' },
-  { label: 'Categories', to: '/admin/categories' },
-  { label: 'Tables', to: '/admin/tables' },
-  { label: 'Orders', to: '/admin/orders' },
-  { label: 'Reports', to: '/admin/reports' },
-  { label: 'Members', to: '/admin/members' },
-  { label: 'Rewards', to: '/admin/rewards' },
-  { label: 'Audit log', to: '/admin/audit-log' },
-  { label: 'Shop settings', to: '/admin/settings' },
-]
+import navigation from '../utils/adminNavigation'
 
 function AdminLayout() {
-  return <PortalLayout area="Admin" navigation={navigation} />
+  return <PortalLayout area="Admin" navigation={navigation} subdued />
 }
 
 export default AdminLayout

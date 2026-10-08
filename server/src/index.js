@@ -1,12 +1,21 @@
 import 'dotenv/config'
+import { createHash } from 'node:crypto'
+import { paymentPlan, selectPaymentOrders } from './paymentSelection.js'
+import { registerHandoffRoutes } from './handoffs.js'
 import cors from 'cors'
 import express from 'express'
 import pg from 'pg'
 import { cashTenderInCents } from './cashTender.js'
 import { buildCounterOrder, CounterOrderValidationError } from './counterOrder.js'
 import { paidReceiptCondition } from './paidReceipt.js'
-import { registerShopSettingsRoutes } from './shopSettings.js'
+import { registerShopSettingsRoutes, loadStoreSettings } from './shopSettings.js'
+import { PosValidationError, validateOptionGroups } from './posRules.js'
+import { registerTakeAwayRoutes } from './takeAwayOrders.js'
+import { validateOrderType, resolveItemOrderTypes, summarizeOrderType } from './orderType.js'
+import { registerOrderChangeRoutes } from './orderChanges.js'
 import { FloorLayoutConflictError, FloorLayoutValidationError, validateFloorLayoutUpdate } from './tableFloorLayout.js'
+import { validateFreePlan } from './freeFloorLayout.js'
+import { registerKitchenEstimateRoutes, loadKitchenEstimates } from './kitchenEstimate.js'
 
 const { Pool } = pg
 const port = Number(process.env.PORT) || 4000
@@ -162,6 +171,7 @@ function menuItemInput(input) {
     allergyInformation: textList(input?.allergyInformation),
     isAvailable: input?.isAvailable !== false,
     isPopular: input?.isPopular === true,
+    optionGroups: validateOptionGroups(input?.optionGroups ?? []),
   }
 }
 
@@ -171,10 +181,12 @@ function orderCartItems(input) {
     menuItemId: String(item?.menuItemId ?? '').trim(),
     quantity: positiveInteger(item?.quantity),
     notes: String(item?.notes ?? item?.specialInstructions ?? '').trim().slice(0, 500),
+    selections: item?.selections ?? [],
+    orderType: item?.orderType === undefined ? undefined : validateOrderType(item.orderType),
   }))
   if (items.some((item) => !uuid.test(item.menuItemId) || !item.quantity || item.quantity > 50)) throw new Error('Your cart contains an invalid item or quantity.')
-  const duplicates = new Set()
-  if (items.some((item) => duplicates.has(item.menuItemId) || !duplicates.add(item.menuItemId))) throw new Error('Each menu item may only appear once in an order.')
+  // Distinct options/notes may produce separate lines for the same dish.
+  if (items.some((item) => !Array.isArray(item.selections))) throw new Error('Invalid dish options.')
   return items
 }
 
@@ -260,6 +272,28 @@ async function logAuditEvent({ action, actorId = null, targetType = null, target
 }
 
 registerShopSettingsRoutes(app, { pool, requireAuthenticatedUser, requireRole, logAuditEvent })
+registerKitchenEstimateRoutes(app, { pool })
+registerOrderChangeRoutes(app, { pool, requireAuthenticatedUser, requireRole })
+registerHandoffRoutes(app, { pool, requireAuthenticatedUser, requireRole })
+
+async function insertPreparedOrder(client, { tableSessionId, customerSessionId, memberId = null, cartItems, requestId, publicOrder = false, settingsRevision, orderType }) {
+  cartItems = resolveItemOrderTypes(cartItems, orderType)
+  orderType = summarizeOrderType(cartItems)
+  const settings = await loadStoreSettings(client)
+  if (settingsRevision !== undefined && settingsRevision !== settings.revision) throw new PosValidationError('Shop settings changed. Refresh the page and review the order total.', 409)
+  if (publicOrder && !settings.isAcceptingOrders) throw new PosValidationError(settings.orderingMessage, 409)
+  const menu = await client.query('SELECT menu_items.id, menu_items.name, menu_items.price, menu_items.option_groups AS "optionGroups", menu_items.is_available AS "isAvailable", (categories.id IS NULL OR categories.is_enabled) AS "categoryEnabled" FROM menu_items LEFT JOIN categories ON categories.id = menu_items.category_id WHERE menu_items.id = ANY($1::uuid[]) FOR SHARE OF menu_items', [cartItems.map((item) => item.menuItemId)])
+  const bill = buildCounterOrder(cartItems, menu.rows, settings.config)
+  const addition = await client.query("SELECT EXISTS(SELECT 1 FROM orders WHERE table_session_id = $1 AND status <> 'cancelled') AS present", [tableSessionId])
+  const created = await client.query(`INSERT INTO orders (table_session_id, customer_session_id, member_id, status, payment_status, subtotal, service_charge, sst, grand_total, client_request_id, service_charge_rate, sst_rate, is_addition, order_type)
+    VALUES ($1, $2, $3, 'received', 'pending', $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    RETURNING id, order_type AS "orderType", table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt", is_addition AS "isAddition"`,
+  [tableSessionId, customerSessionId, memberId, bill.subtotal, bill.serviceCharge, bill.sst, bill.grandTotal, requestId, bill.serviceChargeRate, bill.sstRate, addition.rows[0].present, orderType])
+  for (const item of bill.items) await client.query('INSERT INTO order_items (order_id, menu_item_id, item_name, unit_price, quantity, notes, selections, option_snapshot, order_type) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)', [created.rows[0].id, item.id, item.name, item.unitPrice, item.quantity, item.notes, JSON.stringify(item.selections), JSON.stringify(item.optionSnapshot), item.orderType])
+  return created
+}
+
+registerTakeAwayRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 
 app.get('/health', async (_request, response) => {
   try {
@@ -278,7 +312,7 @@ app.get('/api/v1/public/menu', async (_request, response, next) => {
     const { rows } = await pool.query(`
       SELECT menu_items.id, menu_items.name, menu_items.description, menu_items.price, menu_items.ingredients,
         menu_items.allergy_information AS "allergyInformation",
-        menu_items.image_url AS "imageUrl", menu_items.is_available AS "isAvailable",
+        menu_items.image_url AS "imageUrl", menu_items.option_groups AS "optionGroups", menu_items.is_available AS "isAvailable",
         menu_items.is_popular AS "isPopular", categories.id AS "categoryId",
         categories.name AS "categoryName", categories.sort_order AS "categorySortOrder"
       FROM menu_items
@@ -455,41 +489,27 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
   const requestId = String(request.get('idempotency-key') ?? '').trim()
   if (!uuid.test(requestId)) return response.status(400).json({ error: 'A valid idempotency key is required.' })
   let cartItems
-  try { cartItems = orderCartItems(request.body?.items) } catch (error) { return response.status(400).json({ error: error.message }) }
+  try { validateOrderType(request.body?.orderType); cartItems = orderCartItems(request.body?.items) } catch (error) { return response.status(400).json({ error: error.message }) }
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const existing = await client.query('SELECT id, table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
+    const existing = await client.query('SELECT id, order_type AS "orderType", table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
     if (existing.rows[0]) {
       await client.query('COMMIT')
       return response.status(200).json({ order: existing.rows[0], duplicate: true })
     }
     const session = await client.query("SELECT customer_sessions.id FROM customer_sessions JOIN table_sessions ON table_sessions.id = customer_sessions.table_session_id WHERE customer_sessions.id = $1 AND customer_sessions.left_at IS NULL AND table_sessions.status = 'active' FOR UPDATE OF customer_sessions, table_sessions", [request.customerSession.id])
     if (!session.rows[0]) throw new Error('Your table session is no longer active.')
-    const ids = cartItems.map((item) => item.menuItemId)
-    const menu = await client.query('SELECT id, name, price, is_available AS "isAvailable" FROM menu_items WHERE id = ANY($1::uuid[]) FOR UPDATE', [ids])
-    const byId = new Map(menu.rows.map((item) => [item.id, item]))
-    const invalid = cartItems.find((item) => {
-      const menuItem = byId.get(item.menuItemId)
-      return !menuItem || menuItem.isAvailable !== true || !String(menuItem.name ?? '').trim() || money(menuItem.price) === null
-    })
-    if (invalid) throw new Error('This item is no longer available. Return to your cart and update it.')
-    const items = cartItems.map((item) => ({ ...item, ...byId.get(item.menuItemId), unitPrice: money(byId.get(item.menuItemId).price) }))
-    const subtotal = roundMoney(items.reduce((total, item) => total + item.unitPrice * item.quantity, 0))
-    const serviceCharge = roundMoney(subtotal * 0.1)
-    const sst = roundMoney(subtotal * 0.06)
-    const grandTotal = roundMoney(subtotal + serviceCharge + sst)
-    const created = await client.query("INSERT INTO orders (table_session_id, customer_session_id, member_id, status, payment_status, subtotal, service_charge, sst, grand_total, client_request_id) VALUES ($1, $2, $3, 'received', 'pending', $4, $5, $6, $7, $8) RETURNING id, table_order_number AS \"tableOrderNumber\", status, payment_status AS \"paymentStatus\", grand_total AS \"grandTotal\", created_at AS \"createdAt\"", [request.customerSession.tableSessionId, request.customerSession.id, request.customerSession.isSharedTable ? null : request.customerSession.memberId, subtotal, serviceCharge, sst, grandTotal, requestId])
-    const orderId = created.rows[0].id
-    for (const item of items) await client.query('INSERT INTO order_items (order_id, menu_item_id, item_name, unit_price, quantity, notes) VALUES ($1, $2, $3, $4, $5, $6)', [orderId, item.id, item.name, item.unitPrice, item.quantity, item.notes])
+    const created = await insertPreparedOrder(client, { tableSessionId: request.customerSession.tableSessionId, customerSessionId: request.customerSession.id, memberId: request.customerSession.isSharedTable ? null : request.customerSession.memberId, cartItems, requestId, publicOrder: true, settingsRevision: request.body?.settingsRevision, orderType: request.body?.orderType })
     await client.query('COMMIT')
     return response.status(201).json({ order: created.rows[0], duplicate: false })
   } catch (error) {
     await client.query('ROLLBACK')
     if (error.code === '23505') {
-      const existing = await pool.query('SELECT id, table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
+      const existing = await pool.query('SELECT id, order_type AS "orderType", table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
       if (existing.rows[0]) return response.status(200).json({ order: existing.rows[0], duplicate: true })
     }
+    if (error instanceof PosValidationError || error instanceof CounterOrderValidationError) return response.status(error.status).json({ error: error.message })
     if (String(error.message).includes('no longer available') || String(error.message).includes('no longer active')) return response.status(409).json({ error: error.message })
     return next(error)
   } finally { client.release() }
@@ -498,21 +518,31 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
 app.get('/api/v1/public/orders', requireCustomerSession, async (request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.table_order_number AS "tableOrderNumber", restaurant_tables.table_number AS "tableNumber", orders.status, orders.payment_status AS "paymentStatus",
+      SELECT orders.id, orders.customer_session_id AS "customerSessionId", customer_sessions.created_by_cashier AS "isCounterOrder",
+        orders.customer_session_id = $1::uuid AS "isCurrentCustomer",
+        orders.order_type AS "orderType", orders.table_order_number AS "tableOrderNumber", restaurant_tables.table_number AS "tableNumber", orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus",
         orders.subtotal, orders.discount_amount AS "discountAmount",
-        orders.service_charge AS "serviceCharge", orders.sst, orders.grand_total AS "grandTotal",
+        orders.service_charge_rate AS "serviceChargeRate", orders.sst_rate AS "sstRate", orders.service_charge AS "serviceCharge", orders.sst, orders.grand_total AS "grandTotal",
         orders.created_at AS "createdAt", orders.updated_at AS "updatedAt",
-        COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'quantity', order_items.quantity, 'notes', order_items.notes, 'imageUrl', menu_items.image_url) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
+        COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes, 'imageUrl', menu_items.image_url) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
       FROM orders
+        JOIN customer_sessions ON customer_sessions.id = orders.customer_session_id
         JOIN table_sessions ON table_sessions.id = orders.table_session_id
         JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
         LEFT JOIN order_items ON order_items.order_id = orders.id
         LEFT JOIN menu_items ON menu_items.id = order_items.menu_item_id
-      WHERE orders.customer_session_id = $1
-      GROUP BY orders.id, restaurant_tables.table_number
+      WHERE orders.table_session_id = $2
+        AND customer_sessions.table_session_id = $2
+        AND (orders.customer_session_id = $1 OR customer_sessions.created_by_cashier = true)
+      GROUP BY orders.id, customer_sessions.created_by_cashier, restaurant_tables.table_number
       ORDER BY orders.created_at DESC
-    `, [request.customerSession.id])
-    response.status(200).json({ orders: rows })
+    `, [request.customerSession.id, request.customerSession.tableSessionId])
+    let estimates = null
+    if (rows.some((order) => order.status === 'received')) {
+      try { estimates = await loadKitchenEstimates(pool) }
+      catch (error) { console.warn('[API] Kitchen estimate unavailable:', error.message) }
+    }
+    response.set('Cache-Control', 'no-store').status(200).json({ orders: rows.map((order) => ({ ...order, preparationEstimate: estimates?.byOrder.get(order.id) ?? null })) })
   } catch (error) { next(error) }
 })
 
@@ -520,7 +550,7 @@ app.patch('/api/v1/public/orders/:orderId/cancel', requireCustomerSession, async
   const orderId = String(request.params.orderId ?? '')
   if (!uuid.test(orderId)) return response.status(400).json({ error: 'A valid order is required.' })
   try {
-    const { rows } = await pool.query("UPDATE orders SET status = 'cancelled', updated_at = now() WHERE id = $1 AND customer_session_id = $2 AND status = 'received' AND payment_status <> 'paid' RETURNING id, status, payment_status AS \"paymentStatus\", updated_at AS \"updatedAt\"", [orderId, request.customerSession.id])
+    const { rows } = await pool.query("UPDATE orders SET status = 'cancelled', version = version + 1, updated_at = now() WHERE id = $1 AND customer_session_id = $2 AND status = 'received' AND payment_status <> 'paid' AND receipt_number IS NULL AND NOT EXISTS (SELECT 1 FROM order_items WHERE order_id = orders.id AND paid_quantity > 0) RETURNING id, status, payment_status AS \"paymentStatus\", updated_at AS \"updatedAt\"", [orderId, request.customerSession.id])
     if (!rows[0]) return response.status(409).json({ error: 'Only unpaid orders that have not reached the kitchen can be cancelled.' })
     return response.status(200).json({ order: rows[0] })
   } catch (error) { return next(error) }
@@ -531,12 +561,14 @@ app.get('/api/v1/public/table-summary', requireCustomerSession, async (request, 
     const { rows } = await pool.query(`
       SELECT customer_sessions.id, customer_sessions.nickname AS "customerNickname",
         customer_sessions.created_by_cashier AS "isCounterOrder",
-        COALESCE(sum(orders.subtotal), 0) AS subtotal,
-        COALESCE(sum(orders.service_charge), 0) AS "serviceCharge",
-        COALESCE(sum(orders.sst), 0) AS sst,
-        COALESCE(sum(orders.grand_total), 0) AS "grandTotal",
+        COALESCE(sum(orders.subtotal - orders.paid_subtotal), 0) AS subtotal,
+        COALESCE(sum(orders.service_charge - orders.paid_service_charge), 0) AS "serviceCharge",
+        COALESCE(sum(orders.sst - orders.paid_sst), 0) AS sst,
+        COALESCE(sum(orders.grand_total - orders.paid_amount), 0) AS "grandTotal",
         COALESCE((array_agg(orders.status::text ORDER BY orders.created_at DESC) FILTER (WHERE orders.id IS NOT NULL))[1], 'no_orders') AS status,
         count(orders.id)::int AS "outstandingOrderCount",
+        count(orders.id) FILTER (WHERE orders.order_type IN ('take_away', 'mixed'))::int AS "takeAwayOrderCount",
+        count(orders.id) FILTER (WHERE orders.order_type IN ('dine_in', 'mixed'))::int AS "dineInOrderCount",
         EXISTS (
           SELECT 1 FROM orders paid_orders
           WHERE paid_orders.customer_session_id = customer_sessions.id
@@ -574,9 +606,9 @@ app.get('/api/v1/public/table-summary', requireCustomerSession, async (request, 
 app.get('/api/v1/kitchen/orders', requireAuthenticatedUser, requireRole('admin', 'kitchen'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.order_number AS "orderNumber", orders.status, orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
+      SELECT orders.id, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.version, orders.is_addition AS "isAddition", orders.revision_note AS "revisionNote", orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
         restaurant_tables.table_number AS "tableNumber", customer_sessions.nickname AS "customerNickname",
-        COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'quantity', order_items.quantity, 'notes', order_items.notes, 'imageUrl', menu_items.image_url) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
+        COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes, 'imageUrl', menu_items.image_url) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
       FROM orders
       JOIN table_sessions ON table_sessions.id = orders.table_session_id
       JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
@@ -591,20 +623,23 @@ app.get('/api/v1/kitchen/orders', requireAuthenticatedUser, requireRole('admin',
   } catch (error) { next(error) }
 })
 
-const kitchenTransitions = { received: 'preparing', preparing: 'ready', ready: 'served' }
+const kitchenTransitions = { received: 'preparing', preparing: 'ready' }
 
 app.patch('/api/v1/kitchen/orders/:orderId/status', requireAuthenticatedUser, requireRole('admin', 'kitchen'), async (request, response, next) => {
   const expectedStatus = String(request.body?.expectedStatus ?? '').toLowerCase()
   const status = String(request.body?.status ?? '').toLowerCase()
   if (kitchenTransitions[expectedStatus] !== status) return response.status(400).json({ error: 'This order status transition is not valid.' })
   try {
-    const { rows } = await pool.query('UPDATE orders SET status = $1::order_status, updated_at = now() WHERE id = $2 AND status = $3::order_status RETURNING id, status, updated_at AS "updatedAt"', [status, String(request.params.orderId ?? ''), expectedStatus])
+    const { rows } = await pool.query('UPDATE orders SET status = $1::order_status, version = version + 1, updated_at = now() WHERE id = $2 AND status = $3::order_status AND ($4::int IS NULL OR version = $4) RETURNING id, status, version, updated_at AS "updatedAt"', [status, String(request.params.orderId ?? ''), expectedStatus, request.body?.expectedVersion ?? null])
     if (!rows[0]) return response.status(409).json({ error: 'This order was updated by another user. Refresh and try again.' })
     return response.status(200).json({ order: rows[0] })
   } catch (error) { return next(error) }
 })
 
 app.post('/api/v1/cashier/payments', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (request, response, next) => {
+  const requestId = String(request.body?.requestId ?? '')
+  if (!uuid.test(requestId)) return response.status(400).json({ error: 'Reload the cashier page before paying. A payment request ID is required.' })
+  const fingerprint = createHash('sha256').update(JSON.stringify(request.body)).digest('hex')
   const orderIds = [...new Set(Array.isArray(request.body?.orderIds) ? request.body.orderIds.map((id) => String(id)) : [])]
   const paymentMethod = String(request.body?.paymentMethod ?? '')
   if (!orderIds.length || orderIds.length > 50 || orderIds.some((id) => !uuid.test(id))) return response.status(400).json({ error: 'Choose valid orders to pay.' })
@@ -616,44 +651,37 @@ app.post('/api/v1/cashier/payments', requireAuthenticatedUser, requireRole('admi
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [requestId])
+    const previous = await client.query(`SELECT payments.*, restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber" FROM payments JOIN table_sessions ON table_sessions.id = payments.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id WHERE request_id = $1`, [requestId])
+    if (previous.rows[0]) {
+      const saved = previous.rows[0]
+      if (saved.request_fingerprint !== fingerprint || saved.cashier_id !== request.user.id) throw new PosValidationError('This payment request was already used for a different bill.', 409)
+      await client.query('COMMIT')
+      return response.json({ payment: { receiptNumber: saved.receipt_number, paidAt: saved.paid_at, amount: saved.amount, cashReceived: saved.cash_received, changeAmount: saved.change_amount, tableId: saved.tableId, tableNumber: saved.tableNumber } })
+    }
     const { rows: orders } = await client.query(`
-      SELECT orders.id, orders.table_session_id AS "tableSessionId", orders.member_id AS "memberId", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber",
-        orders.status, orders.payment_status AS "paymentStatus",
+      SELECT orders.id, orders.order_type AS "orderType", orders.table_session_id AS "tableSessionId", orders.customer_session_id AS "sessionId", (SELECT nickname FROM customer_sessions WHERE id = orders.customer_session_id) AS "customerNickname", orders.member_id AS "memberId", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber",
+        orders.status, orders.version, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.service_charge_rate AS "serviceChargeRate", orders.sst_rate AS "sstRate",
         COALESCE((SELECT sum(order_items.unit_price * order_items.quantity) FROM order_items WHERE order_items.order_id = orders.id), 0) AS subtotal
       FROM orders
       JOIN table_sessions ON table_sessions.id = orders.table_session_id
       JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       WHERE orders.id = ANY($1::uuid[])
+      ORDER BY orders.id
       FOR UPDATE OF orders
     `, [orderIds])
     if (orders.length !== orderIds.length) throw new Error('One or more orders no longer exist.')
     const tableSessionId = orders[0].tableSessionId
-    if (orders.some((order) => order.tableSessionId !== tableSessionId || order.status !== 'served' || order.paymentStatus === 'paid')) throw new Error('Only unpaid served orders from one table can be paid together.')
-    const subtotals = orders.map((order) => money(order.subtotal))
-    if (subtotals.some((value) => value === null)) throw new Error('An order has invalid totals and cannot be paid.')
-    const subtotal = roundMoney(subtotals.reduce((total, value) => total + value, 0))
+    if (orders.some((order) => order.tableSessionId !== tableSessionId || order.status === 'cancelled' || order.paymentStatus === 'paid')) throw new PosValidationError('Only unpaid, non-cancelled orders from one table can be paid together.', 409)
+    for (const order of orders) {
+      if (request.body?.versions?.[order.id] !== order.version) throw new PosValidationError('An order has changed. Refresh and confirm payment again.', 409)
+      order.items = (await client.query('SELECT id, menu_item_id AS "menuItemId", item_name AS name, unit_price AS price, quantity, paid_quantity AS "paidQuantity", order_type AS "orderType", notes, option_snapshot AS "optionSnapshot", selections FROM order_items WHERE order_id = $1 ORDER BY id', [order.id])).rows
+    }
+    const selected = selectPaymentOrders(orders, request.body.selections)
+    const subtotal = roundMoney(selected.reduce((total, order) => total + order.subtotal, 0))
     const discount = discountInput(request.body?.discount, subtotal)
     const discountedSubtotal = roundMoney(subtotal - discount.amount)
-    const discountedCents = Math.round(discountedSubtotal * 100)
-    const tableServiceCharge = Math.round(discountedCents * 10 / 100) / 100
-    const tableSst = Math.round(discountedCents * 6 / 100) / 100
-    let remainingDiscount = discount.amount
-    let remainingServiceCharge = tableServiceCharge
-    let remainingSst = tableSst
-    const finalOrders = orders.map((order, index) => {
-      const isLast = index === orders.length - 1
-      const orderSubtotal = subtotals[index]
-      const discountAmount = isLast ? remainingDiscount : subtotal ? roundMoney(discount.amount * orderSubtotal / subtotal) : 0
-      remainingDiscount = roundMoney(remainingDiscount - discountAmount)
-      const discounted = roundMoney(orderSubtotal - discountAmount)
-      const share = discountedSubtotal ? discounted / discountedSubtotal : 0
-      const serviceCharge = isLast ? remainingServiceCharge : roundMoney(tableServiceCharge * share)
-      const sst = isLast ? remainingSst : roundMoney(tableSst * share)
-      remainingServiceCharge = roundMoney(remainingServiceCharge - serviceCharge)
-      remainingSst = roundMoney(remainingSst - sst)
-      return { id: order.id, subtotal: orderSubtotal, discountAmount, serviceCharge, sst, grandTotal: roundMoney(discounted + serviceCharge + sst) }
-    })
-    const amount = roundMoney(finalOrders.reduce((total, order) => total + order.grandTotal, 0))
+    const { finalOrders, grandTotal: amount } = paymentPlan(orders, request.body.selections, discount.amount)
     const amountCents = cashTenderInCents(amount)
     if (amountCents === null) throw new Error('An order has invalid totals and cannot be paid.')
     if (expectedAmountCents !== null && expectedAmountCents !== amountCents) {
@@ -669,10 +697,11 @@ app.post('/api/v1/cashier/payments', requireAuthenticatedUser, requireRole('admi
     const date = businessDate()
     const sequence = await client.query('INSERT INTO receipt_sequences (business_date, last_number) VALUES ($1::date, 1) ON CONFLICT (business_date) DO UPDATE SET last_number = receipt_sequences.last_number + 1, updated_at = now() RETURNING last_number', [date])
     const receiptNumber = `R-${date.replaceAll('-', '')}-${String(sequence.rows[0].last_number).padStart(4, '0')}`
-    const payment = await client.query('INSERT INTO payments (receipt_number, table_session_id, cashier_id, payment_method, amount, cash_received, change_amount, restaurant_name) VALUES ($1, $2, $3, $4, $5, $6, $7, (SELECT name FROM shop_settings WHERE id = 1)) RETURNING id, receipt_number AS "receiptNumber", amount, cash_received AS "cashReceived", change_amount AS "changeAmount", restaurant_name AS "restaurantName", paid_at AS "paidAt"', [receiptNumber, tableSessionId, request.user.id, paymentMethod, amount, cashReceived, changeAmount])
-    const memberIds = [...new Set(orders.map((order) => order.memberId).filter(Boolean))]
+    const payment = await client.query('INSERT INTO payments (receipt_number, table_session_id, cashier_id, payment_method, amount, cash_received, change_amount, restaurant_name, shop_snapshot) VALUES ($1, $2, $3, $4, $5, $6, $7, (SELECT name FROM shop_settings WHERE id = 1), (SELECT jsonb_build_object(\'name\', name) || config FROM shop_settings WHERE id = 1)) RETURNING id, receipt_number AS "receiptNumber", amount, cash_received AS "cashReceived", change_amount AS "changeAmount", restaurant_name AS "restaurantName", paid_at AS "paidAt"', [receiptNumber, tableSessionId, request.user.id, paymentMethod, amount, cashReceived, changeAmount])
+    await client.query('UPDATE payments SET order_snapshot = $1::jsonb, request_id = $2, request_fingerprint = $3 WHERE id = $4', [JSON.stringify(finalOrders), requestId, fingerprint, payment.rows[0].id])
+    const memberIds = [...new Set(selected.map((order) => order.memberId))]
     let loyalty = null
-    if (memberIds.length === 1) {
+    if (memberIds.length === 1 && memberIds[0]) {
       const member = await client.query("SELECT id, name, points_balance AS \"pointsBalance\" FROM members WHERE id = $1 AND status = 'active' FOR UPDATE", [memberIds[0]])
       if (member.rows[0]) {
         const points = Math.floor(discountedSubtotal)
@@ -683,12 +712,22 @@ app.post('/api/v1/cashier/payments', requireAuthenticatedUser, requireRole('admi
         loyalty = { memberName: member.rows[0].name, points, pointsBalance: Number(member.rows[0].pointsBalance) + points, eligibleSpending: discountedSubtotal }
       }
     }
-    for (const order of finalOrders) await client.query("UPDATE orders SET subtotal = $1, discount_amount = $2, service_charge = $3, sst = $4, grand_total = $5, payment_status = 'paid', receipt_number = $6, payment_method = $7, paid_at = now(), updated_at = now() WHERE id = $8", [order.subtotal, order.discountAmount, order.serviceCharge, order.sst, order.grandTotal, receiptNumber, paymentMethod, order.id])
+    for (const order of finalOrders) {
+      for (const item of order.items) await client.query('UPDATE order_items SET paid_quantity = paid_quantity + $1 WHERE id = $2', [item.quantity, item.id])
+      await client.query(`UPDATE orders SET paid_subtotal = paid_subtotal + $1, discount_amount = discount_amount + $2,
+        service_charge = paid_service_charge + $3 + $9, sst = paid_sst + $4 + $10,
+        grand_total = paid_amount + $5 + $11, paid_service_charge = paid_service_charge + $3, paid_sst = paid_sst + $4,
+        paid_amount = paid_amount + $5, payment_status = CASE WHEN $12 THEN 'paid'::payment_status ELSE 'pending'::payment_status END,
+        receipt_number = $6, payment_method = $7,
+        paid_at = CASE WHEN $12 THEN now() ELSE paid_at END, version = version + 1, updated_at = now() WHERE id = $8`,
+      [order.subtotal, order.discountAmount, order.serviceCharge, order.sst, order.grandTotal, receiptNumber, paymentMethod, order.id, order.remaining.serviceCharge, order.remaining.sst, order.remaining.grandTotal, order.fullyPaid])
+    }
     await client.query('COMMIT')
     void logAuditEvent({ action: 'COMPLETE_PAYMENT', actorId: request.user.id, targetType: 'receipt', targetId: receiptNumber, details: { tableNumber: orders[0].tableNumber, paymentMethod, amount, ...(paymentMethod === 'Cash' ? { cashReceived, changeAmount } : {}), ...(loyalty ? { pointsEarned: loyalty.points } : {}) } })
     return response.status(201).json({ payment: { ...payment.rows[0], tableId: orders[0].tableId, tableNumber: orders[0].tableNumber, paymentMethod, orderIds: finalOrders.map((order) => order.id), loyalty } })
   } catch (error) {
     await client.query('ROLLBACK')
+    if (error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
     if (String(error.message).includes('orders') || String(error.message).includes('Only unpaid') || String(error.message).includes('invalid totals') || String(error.message).includes('discount')) return response.status(409).json({ error: error.message })
     return next(error)
   } finally { client.release() }
@@ -699,17 +738,17 @@ app.get('/api/v1/cashier/receipts/:receiptNumber', requireAuthenticatedUser, req
     const { rows } = await pool.query(`
       SELECT payments.receipt_number AS "receiptNumber", payments.payment_method AS "paymentMethod", payments.amount,
         payments.cash_received AS "cashReceived", payments.change_amount AS "changeAmount",
-        payments.restaurant_name AS "restaurantName",
+        payments.restaurant_name AS "restaurantName", payments.shop_snapshot AS "shopSnapshot",
         payments.paid_at AS "paidAt", restaurant_tables.table_number AS "tableNumber",
         users.display_name AS "cashierName",
-        COALESCE(jsonb_agg(jsonb_build_object('id', orders.id, 'subtotal', orders.subtotal, 'discountAmount', orders.discount_amount, 'serviceCharge', orders.service_charge, 'sst', orders.sst, 'grandTotal', orders.grand_total, 'customerNickname', customer_sessions.nickname, 'items', COALESCE(items.items, '[]'::jsonb)) ORDER BY orders.created_at) FILTER (WHERE orders.id IS NOT NULL), '[]'::jsonb) AS orders
+        COALESCE(payments.order_snapshot, jsonb_agg(jsonb_build_object('id', orders.id, 'orderType', orders.order_type, 'subtotal', orders.subtotal, 'discountAmount', orders.discount_amount, 'serviceCharge', orders.service_charge, 'sst', orders.sst, 'grandTotal', orders.grand_total, 'customerNickname', customer_sessions.nickname, 'items', COALESCE(items.items, '[]'::jsonb)) ORDER BY orders.created_at) FILTER (WHERE orders.id IS NOT NULL), '[]'::jsonb) AS orders
       FROM payments
       JOIN table_sessions ON table_sessions.id = payments.table_session_id
       JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       LEFT JOIN users ON users.id = payments.cashier_id
       LEFT JOIN orders ON orders.receipt_number = payments.receipt_number
       LEFT JOIN customer_sessions ON customer_sessions.id = orders.customer_session_id
-      LEFT JOIN LATERAL (SELECT jsonb_agg(jsonb_build_object('menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'quantity', order_items.quantity, 'notes', order_items.notes) ORDER BY order_items.id) AS items FROM order_items WHERE order_items.order_id = orders.id) items ON true
+      LEFT JOIN LATERAL (SELECT jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes) ORDER BY order_items.id) AS items FROM order_items WHERE order_items.order_id = orders.id) items ON true
       WHERE payments.receipt_number = $1 AND ${paidReceiptCondition}
       GROUP BY payments.id, restaurant_tables.table_number, users.display_name
     `, [String(request.params.receiptNumber ?? '')])
@@ -752,7 +791,16 @@ app.post('/api/v1/public/service-requests', requireCustomerSession, async (reque
   const note = String(request.body?.note ?? '').trim().slice(0, 500)
   if (!requestType) return response.status(400).json({ error: 'Choose a service request type.' })
   try {
-    const { rows } = await pool.query("INSERT INTO service_requests (table_session_id, customer_session_id, request_type, status, details) VALUES ($1, $2, $3, 'pending', $4::jsonb) RETURNING id, request_type AS \"requestType\", status, created_at AS \"createdAt\"", [request.customerSession.tableSessionId, request.customerSession.id, requestType, JSON.stringify(note ? { note } : {})])
+    const details = note ? { note } : {}
+    if (requestType === 'requestBill') {
+      if (!['table', 'split'].includes(request.body?.billMode ?? 'table')) return response.status(400).json({ error: 'Choose table bill or split bill.' })
+      const bill = await pool.query("SELECT count(*)::int AS count, COALESCE(sum(grand_total - paid_amount), 0) AS amount FROM orders WHERE table_session_id = $1 AND payment_status <> 'paid' AND status <> 'cancelled'", [request.customerSession.tableSessionId])
+      if (!bill.rows[0].count) return response.status(409).json({ error: 'There are no unpaid items on this table.' })
+      details.billMode = request.body?.billMode ?? 'table'
+      details.requestedAmount = details.billMode === 'table' ? Number(bill.rows[0].amount) : null
+      details.note = details.billMode === 'split' ? 'Select dishes and quantities with the cashier.' : 'One bill for all remaining table items.'
+    }
+    const { rows } = await pool.query("INSERT INTO service_requests (table_session_id, customer_session_id, request_type, status, details) VALUES ($1, $2, $3, 'pending', $4::jsonb) RETURNING id, request_type AS \"requestType\", status, created_at AS \"createdAt\"", [request.customerSession.tableSessionId, request.customerSession.id, requestType, JSON.stringify(details)])
     return response.status(201).json({ request: rows[0], duplicate: false })
   } catch (error) {
     if (error.code === '23505') return response.status(200).json({ duplicate: true })
@@ -794,9 +842,9 @@ app.get('/api/v1/staff/tables', requireAuthenticatedUser, requireRole('admin', '
       LEFT JOIN LATERAL (SELECT id FROM table_sessions WHERE table_id = restaurant_tables.id AND status = 'active' ORDER BY created_at DESC LIMIT 1) active_sessions ON true
       LEFT JOIN LATERAL (SELECT count(*) FROM customer_sessions WHERE table_session_id = active_sessions.id AND left_at IS NULL) participants ON true
       LEFT JOIN LATERAL (
-        SELECT count(*) AS count, COALESCE(sum(grand_total) FILTER (WHERE payment_status <> 'paid' AND status <> 'cancelled'), 0) AS unpaid_total,
+        SELECT count(*) AS count, COALESCE(sum(grand_total - paid_amount) FILTER (WHERE payment_status <> 'paid' AND status <> 'cancelled'), 0) AS unpaid_total,
           bool_and(status = 'served') FILTER (WHERE status <> 'cancelled' AND payment_status <> 'paid') AS all_served,
-          bool_and(payment_status = 'paid' OR status = 'cancelled') AS ready_to_clear
+          bool_and((payment_status = 'paid' AND status = 'served') OR status = 'cancelled') AS ready_to_clear
         FROM orders WHERE table_session_id = active_sessions.id
       ) order_data ON true
       ORDER BY restaurant_tables.table_number ASC
@@ -808,17 +856,17 @@ app.get('/api/v1/staff/tables', requireAuthenticatedUser, requireRole('admin', '
 app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.order_number AS "orderNumber", orders.table_session_id AS "tableSessionId", orders.member_id AS "memberId", orders.status,
-        orders.payment_status AS "paymentStatus", orders.subtotal, orders.discount_amount AS "discountAmount",
-        orders.service_charge AS "serviceCharge", orders.sst, orders.grand_total AS "grandTotal",
+      SELECT orders.id, orders.version, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.table_session_id AS "tableSessionId", orders.member_id AS "memberId", orders.status,
+        orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", (orders.subtotal - orders.paid_subtotal) AS subtotal, orders.discount_amount AS "discountAmount",
+        orders.service_charge_rate AS "serviceChargeRate", orders.sst_rate AS "sstRate", (orders.service_charge - orders.paid_service_charge) AS "serviceCharge", (orders.sst - orders.paid_sst) AS sst, (orders.grand_total - orders.paid_amount) AS "grandTotal",
         orders.created_at AS "createdAt", orders.updated_at AS "updatedAt", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber",
         customer_sessions.id AS "sessionId", customer_sessions.nickname AS "customerNickname",
-        COALESCE(jsonb_agg(jsonb_build_object('menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'quantity', order_items.quantity, 'notes', order_items.notes) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
+        COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
       JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       JOIN customer_sessions ON customer_sessions.id = orders.customer_session_id
       LEFT JOIN order_items ON order_items.order_id = orders.id
-      WHERE orders.status = 'served' AND orders.payment_status = 'pending'
+      WHERE orders.status <> 'cancelled' AND orders.payment_status = 'pending'
       GROUP BY orders.id, restaurant_tables.id, restaurant_tables.table_number, customer_sessions.id, customer_sessions.nickname
       ORDER BY orders.updated_at DESC
     `)
@@ -826,23 +874,18 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
       SELECT restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber"
       FROM restaurant_tables
       JOIN table_sessions ON table_sessions.table_id = restaurant_tables.id AND table_sessions.status = 'active'
-      WHERE EXISTS (
-        SELECT 1 FROM orders
-        WHERE orders.table_session_id = table_sessions.id
-          AND orders.payment_status = 'paid'
-          AND orders.status <> 'cancelled'
-      )
-        AND NOT EXISTS (
+      WHERE NOT EXISTS (
           SELECT 1 FROM orders
           WHERE orders.table_session_id = table_sessions.id
-            AND orders.payment_status <> 'paid'
+            AND (orders.payment_status <> 'paid' OR orders.status <> 'served')
             AND orders.status <> 'cancelled'
         )
       ORDER BY restaurant_tables.table_number ASC
     `)
+    const { rows: [floorPlan] } = await pool.query('SELECT markers, revision FROM floor_plan_settings WHERE id = 1')
     const { rows: floorTables } = await pool.query(`
       SELECT restaurant_tables.id, restaurant_tables.table_number AS "tableNumber", restaurant_tables.capacity,
-        restaurant_tables.floor_x AS "floorX", restaurant_tables.floor_y AS "floorY", restaurant_tables.floor_zone AS "floorZone",
+        restaurant_tables.floor_x AS "floorX", restaurant_tables.floor_y AS "floorY", restaurant_tables.floor_zone AS "floorZone", restaurant_tables.floor_style AS "floorStyle", restaurant_tables.floor_point AS "floorPoint",
         restaurant_tables.is_enabled AS "isEnabled", active_sessions.id AS "tableSessionId",
         COALESCE(participants.count, 0)::int AS "participantCount",
         COALESCE(order_data.unpaid_total, 0)::double precision AS "unpaidTotal",
@@ -860,15 +903,15 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
       LEFT JOIN LATERAL (SELECT id FROM table_sessions WHERE table_id = restaurant_tables.id AND status = 'active' ORDER BY created_at DESC LIMIT 1) active_sessions ON true
       LEFT JOIN LATERAL (SELECT count(*) FROM customer_sessions WHERE table_session_id = active_sessions.id AND left_at IS NULL) participants ON true
       LEFT JOIN LATERAL (
-        SELECT count(*) AS count, COALESCE(sum(grand_total) FILTER (WHERE payment_status <> 'paid' AND status <> 'cancelled'), 0) AS unpaid_total,
-          COALESCE(sum(grand_total) FILTER (WHERE payment_status = 'pending' AND status = 'served'), 0) AS payable_total,
+        SELECT count(*) AS count, COALESCE(sum(grand_total - paid_amount) FILTER (WHERE payment_status <> 'paid' AND status <> 'cancelled'), 0) AS unpaid_total,
+          COALESCE(sum(grand_total - paid_amount) FILTER (WHERE payment_status = 'pending' AND status <> 'cancelled'), 0) AS payable_total,
           count(*) FILTER (WHERE payment_status = 'paid' AND status <> 'cancelled') AS paid_count,
           count(*) FILTER (WHERE payment_status <> 'paid' AND status <> 'cancelled') AS unpaid_count,
           jsonb_build_object('received', count(*) FILTER (WHERE status = 'received'),
             'preparing', count(*) FILTER (WHERE status = 'preparing'), 'ready', count(*) FILTER (WHERE status = 'ready'),
             'served', count(*) FILTER (WHERE status = 'served'), 'cancelled', count(*) FILTER (WHERE status = 'cancelled')) AS status_counts,
           bool_and(status = 'served') FILTER (WHERE status <> 'cancelled' AND payment_status <> 'paid') AS all_served,
-          bool_and(payment_status = 'paid' OR status = 'cancelled') AS ready_to_clear
+          bool_and((payment_status = 'paid' AND status = 'served') OR status = 'cancelled') AS ready_to_clear
         FROM orders WHERE table_session_id = active_sessions.id
       ) order_data ON true
       ORDER BY restaurant_tables.table_number ASC
@@ -884,20 +927,21 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
         AND paid_at < ((date_trunc('day', now() AT TIME ZONE 'Asia/Kuching') + interval '1 day') AT TIME ZONE 'Asia/Kuching')
     `)
     const { rows: recentOrders } = await pool.query(`
-      SELECT orders.id, orders.order_number AS "orderNumber", orders.status,
-        orders.payment_status AS "paymentStatus", orders.grand_total::double precision AS "grandTotal",
-        orders.created_at AS "createdAt", restaurant_tables.table_number AS "tableNumber"
+      SELECT orders.id, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.status,
+        orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total::double precision AS "grandTotal",
+        orders.created_at AS "createdAt", restaurant_tables.id AS "tableId", orders.table_session_id AS "tableSessionId", restaurant_tables.table_number AS "tableNumber"
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
       JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       ORDER BY orders.created_at DESC, orders.id DESC LIMIT 8
     `)
-    response.status(200).json({ orders: rows, clearableTables, floorTables, summary, recentOrders })
+    const { rows: billRequests } = await pool.query(`SELECT service_requests.id, table_sessions.table_id AS "tableId", service_requests.details FROM service_requests JOIN table_sessions ON table_sessions.id = service_requests.table_session_id WHERE request_type = 'requestBill' AND service_requests.status = 'pending' AND table_sessions.status = 'active'`)
+    response.status(200).json({ orders: rows, clearableTables, floorTables, floorPlan, summary, recentOrders, billRequests })
   } catch (error) { next(error) }
 })
 
 app.get('/api/v1/cashier/order-setup', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (_request, response, next) => {
   try {
-    const [tables, menu] = await Promise.all([
+    const [tables, menu, settings] = await Promise.all([
       pool.query(`SELECT restaurant_tables.id, restaurant_tables.table_number AS "tableNumber",
         active_sessions.id AS "tableSessionId"
         FROM restaurant_tables
@@ -907,13 +951,14 @@ app.get('/api/v1/cashier/order-setup', requireAuthenticatedUser, requireRole('ad
         ) active_sessions ON true
         WHERE restaurant_tables.is_enabled = true ORDER BY restaurant_tables.table_number`),
       pool.query(`SELECT menu_items.id, menu_items.name, menu_items.price,
-        menu_items.image_url AS "imageUrl", menu_items.is_available AS "isAvailable",
+        menu_items.image_url AS "imageUrl", menu_items.option_groups AS "optionGroups", menu_items.is_available AS "isAvailable",
         categories.name AS "categoryName"
         FROM menu_items LEFT JOIN categories ON categories.id = menu_items.category_id
         WHERE categories.id IS NULL OR categories.is_enabled = true
         ORDER BY categories.sort_order NULLS LAST, menu_items.name`),
+      loadStoreSettings(pool),
     ])
-    response.status(200).json({ tables: tables.rows, items: menu.rows })
+    response.status(200).json({ tables: tables.rows, items: menu.rows, settings: settings.config, settingsRevision: settings.revision })
   } catch (error) { next(error) }
 })
 
@@ -927,12 +972,12 @@ app.post('/api/v1/cashier/orders', requireAuthenticatedUser, requireRole('admin'
   }
   if (nickname.length > 80) return response.status(400).json({ error: 'Customer name must be 80 characters or fewer.' })
   let cartItems
-  try { cartItems = orderCartItems(request.body?.items) } catch (error) { return response.status(400).json({ error: error.message }) }
+  try { validateOrderType(request.body?.orderType); cartItems = orderCartItems(request.body?.items) } catch (error) { return response.status(400).json({ error: error.message }) }
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const existingOrder = await client.query(`SELECT orders.id, orders.table_order_number AS "tableOrderNumber",
-      orders.status, orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal",
+    const existingOrder = await client.query(`SELECT orders.id, orders.order_type AS "orderType", orders.table_order_number AS "tableOrderNumber",
+      orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal",
       orders.created_at AS "createdAt", table_sessions.table_id AS "tableId"
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
       WHERE orders.client_request_id = $1`, [requestId])
@@ -951,31 +996,21 @@ app.post('/api/v1/cashier/orders', requireAuthenticatedUser, requireRole('admin'
       await client.query('ROLLBACK')
       return response.status(409).json({ error: 'This table visit changed. Refresh and review the order.' })
     }
-    const menu = await client.query(`SELECT menu_items.id, menu_items.name, menu_items.price,
-      menu_items.is_available AS "isAvailable", (categories.id IS NULL OR categories.is_enabled = true) AS "categoryEnabled"
-      FROM menu_items LEFT JOIN categories ON categories.id = menu_items.category_id
-      WHERE menu_items.id = ANY($1::uuid[]) FOR UPDATE OF menu_items`, [cartItems.map((item) => item.menuItemId)])
-    const { items, subtotal, serviceCharge, sst, grandTotal } = buildCounterOrder(cartItems, menu.rows)
+
     const tableSessionId = activeSession.rows[0]?.id ?? (await client.query("INSERT INTO table_sessions (table_id, status) VALUES ($1, 'active') RETURNING id", [tableId])).rows[0].id
     // Closed cashier-created sessions keep order ownership without appearing as
     // a guest participant or exposing an ordering token to another customer.
     const customerSession = await client.query('INSERT INTO customer_sessions (table_session_id, nickname, left_at, created_by_cashier) VALUES ($1, $2, now(), true) RETURNING id', [tableSessionId, nickname])
-    const created = await client.query(`INSERT INTO orders (table_session_id, customer_session_id, status, payment_status,
-      subtotal, service_charge, sst, grand_total, client_request_id)
-      VALUES ($1, $2, 'received', 'pending', $3, $4, $5, $6, $7)
-      RETURNING id, table_order_number AS "tableOrderNumber", status,
-        payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt"`,
-    [tableSessionId, customerSession.rows[0].id, subtotal, serviceCharge, sst, grandTotal, requestId])
-    for (const item of items) await client.query('INSERT INTO order_items (order_id, menu_item_id, item_name, unit_price, quantity, notes) VALUES ($1, $2, $3, $4, $5, $6)', [created.rows[0].id, item.id, item.name, item.unitPrice, item.quantity, item.notes])
+    const created = await insertPreparedOrder(client, { tableSessionId, customerSessionId: customerSession.rows[0].id, cartItems, requestId, settingsRevision: request.body?.settingsRevision, orderType: request.body?.orderType })
     await client.query('COMMIT')
-    void logAuditEvent({ action: 'CREATE_COUNTER_ORDER', actorId: request.user.id, targetType: 'order', targetId: created.rows[0].id, details: { tableId, itemCount: items.length } })
+    void logAuditEvent({ action: 'CREATE_COUNTER_ORDER', actorId: request.user.id, targetType: 'order', targetId: created.rows[0].id, details: { tableId, orderType: created.rows[0].orderType, itemCount: cartItems.length, isAddition: created.rows[0].isAddition } })
     return response.status(201).json({ order: created.rows[0], duplicate: false })
   } catch (error) {
     await client.query('ROLLBACK')
-    if (error instanceof CounterOrderValidationError) return response.status(error.status).json({ error: error.message })
+    if (error instanceof CounterOrderValidationError || error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
     if (error.code === '23505') {
-      const { rows } = await pool.query(`SELECT orders.id, orders.table_order_number AS "tableOrderNumber", orders.status,
-        orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
+      const { rows } = await pool.query(`SELECT orders.id, orders.order_type AS "orderType", orders.table_order_number AS "tableOrderNumber", orders.status,
+        orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
         table_sessions.table_id AS "tableId" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
         WHERE orders.client_request_id = $1`, [requestId])
       if (rows[0]?.tableId === tableId) {
@@ -991,14 +1026,26 @@ app.patch('/api/v1/cashier/table-layout', requireAuthenticatedUser, requireRole(
   if (!client) return
   try {
     await client.query('BEGIN')
-    const { rows: currentTables } = await client.query('SELECT id, floor_x AS "floorX", floor_y AS "floorY", floor_zone AS "floorZone" FROM restaurant_tables ORDER BY id FOR UPDATE')
+    const { rows: [settings] } = await client.query('SELECT markers, revision FROM floor_plan_settings WHERE id = 1 FOR UPDATE')
+    const { rows: currentTables } = await client.query('SELECT id, floor_x AS "floorX", floor_y AS "floorY", floor_zone AS "floorZone", floor_style AS "floorStyle", floor_point AS "floorPoint" FROM restaurant_tables ORDER BY id FOR UPDATE')
     const positions = validateFloorLayoutUpdate(request.body, currentTables)
+    let markers = settings.markers
+    if (Object.hasOwn(request.body, 'markers')) {
+      try { markers = validateFreePlan(request.body, positions, settings) }
+      catch (error) {
+        if (error.message === 'CONFLICT') throw new FloorLayoutConflictError('The layout changed in another window. Cancel and reload before saving.')
+        throw new FloorLayoutValidationError(error.message)
+      }
+    } else if (positions.some((position) => position.point !== undefined)) {
+      throw new FloorLayoutValidationError('Reload the full floor layout before saving.')
+    }
     await client.query('UPDATE restaurant_tables SET floor_x = NULL, floor_y = NULL WHERE floor_x IS NOT NULL OR floor_y IS NOT NULL')
     for (const position of positions) {
-      await client.query('UPDATE restaurant_tables SET floor_x = $1, floor_y = $2, floor_zone = $3 WHERE id = $4', [position.x, position.y, position.zone, position.tableId])
+      await client.query('UPDATE restaurant_tables SET floor_x = $1, floor_y = $2, floor_zone = $3, floor_style = $5, floor_point = $6 WHERE id = $4', [position.x, position.y, position.zone, position.tableId, position.style, position.point ?? null])
     }
+    const { rows: [floorPlan] } = await client.query('UPDATE floor_plan_settings SET markers = $1, revision = revision + 1, updated_at = now() WHERE id = 1 RETURNING markers, revision', [JSON.stringify(markers)])
     await client.query('COMMIT')
-    return response.status(200).json({ positions })
+    return response.status(200).json({ positions, floorPlan })
   } catch (error) {
     await client.query('ROLLBACK')
     if (error instanceof FloorLayoutConflictError) return response.status(409).json({ error: error.message })
@@ -1053,12 +1100,12 @@ app.get('/api/v1/cashier/shift-closings/:closingId', requireAuthenticatedUser, r
 app.get('/api/v1/admin/orders', requireAuthenticatedUser, requireRole('admin'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.order_number AS "orderNumber", orders.status, orders.payment_status AS "paymentStatus", orders.subtotal,
+      SELECT orders.id, orders.order_type AS "orderType", orders.version, orders.order_number AS "orderNumber", orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.subtotal,
         orders.discount_amount AS "discountAmount", orders.service_charge AS "serviceCharge", orders.sst,
         orders.grand_total AS "grandTotal", orders.created_at AS "createdAt", orders.updated_at AS "updatedAt",
         orders.paid_at AS "paidAt", orders.receipt_number AS "receiptNumber", orders.payment_method AS "paymentMethod",
         restaurant_tables.table_number AS "tableNumber", customer_sessions.nickname AS "customerNickname",
-        COALESCE(jsonb_agg(jsonb_build_object('menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'quantity', order_items.quantity, 'notes', order_items.notes) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
+        COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
       JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       JOIN customer_sessions ON customer_sessions.id = orders.customer_session_id
@@ -1070,14 +1117,7 @@ app.get('/api/v1/admin/orders', requireAuthenticatedUser, requireRole('admin'), 
   } catch (error) { next(error) }
 })
 
-app.patch('/api/v1/admin/orders/:orderId/cancel', requireAuthenticatedUser, requireRole('admin'), async (request, response, next) => {
-  try {
-    const { rows } = await pool.query("UPDATE orders SET status = 'cancelled', updated_at = now() WHERE id = $1 AND payment_status = 'pending' AND status IN ('received', 'preparing', 'ready') RETURNING id, status", [String(request.params.orderId ?? '')])
-    if (!rows[0]) return response.status(409).json({ error: 'Only unpaid orders that have not been served can be cancelled.' })
-    void logAuditEvent({ action: 'CANCEL_ORDER', actorId: request.user.id, targetType: 'order', targetId: rows[0].id })
-    response.status(200).json({ order: rows[0] })
-  } catch (error) { next(error) }
-})
+// Admin cancellation is handled transactionally by orderChanges.js.
 
 app.get('/api/v1/admin/audit-logs', requireAuthenticatedUser, requireRole('admin'), async (request, response, next) => {
   const limit = Math.min(200, Math.max(1, Number.parseInt(request.query?.limit, 10) || 100))
@@ -1091,9 +1131,9 @@ app.get('/api/v1/admin/dashboard', requireAuthenticatedUser, requireRole('admin'
   const today = businessDate()
   try {
     const [metrics, popularFoods, recentOrders] = await Promise.all([
-      pool.query(`SELECT count(*) FILTER (WHERE (created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date)::int AS "todayOrderCount", COALESCE(sum(grand_total) FILTER (WHERE payment_status = 'paid' AND (paid_at AT TIME ZONE 'Asia/Kuching')::date = $1::date), 0) AS "todayRevenue", count(*) FILTER (WHERE status IN ('received', 'preparing', 'ready'))::int AS "activeOrderCount" FROM orders`, [today]),
+      pool.query(`SELECT count(*) FILTER (WHERE (created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date)::int AS "todayOrderCount", (SELECT COALESCE(sum(amount), 0) FROM payments WHERE (paid_at AT TIME ZONE 'Asia/Kuching')::date = $1::date) AS "todayRevenue", count(*) FILTER (WHERE status IN ('received', 'preparing', 'ready'))::int AS "activeOrderCount" FROM orders`, [today]),
       pool.query(`SELECT order_items.item_name AS name, sum(order_items.quantity)::int AS quantity FROM orders JOIN order_items ON order_items.order_id = orders.id WHERE orders.status <> 'cancelled' AND (orders.created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date GROUP BY order_items.item_name ORDER BY quantity DESC, name ASC LIMIT 5`, [today]),
-      pool.query(`SELECT orders.id, orders.order_number AS "orderNumber", orders.status, orders.grand_total AS "grandTotal", orders.created_at AS "createdAt", restaurant_tables.table_number AS "tableNumber" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id ORDER BY orders.created_at DESC LIMIT 5`),
+      pool.query(`SELECT orders.id, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.status, orders.grand_total AS "grandTotal", orders.created_at AS "createdAt", restaurant_tables.table_number AS "tableNumber" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id ORDER BY orders.created_at DESC LIMIT 5`),
     ])
     const requests = await pool.query("SELECT count(*)::int AS count FROM service_requests WHERE status = 'pending'")
     response.status(200).json({ dashboard: { ...metrics.rows[0], pendingRequestCount: requests.rows[0].count, popularFoods: popularFoods.rows, recentOrders: recentOrders.rows } })
@@ -1190,16 +1230,23 @@ app.patch('/api/v1/admin/rewards/:rewardId', requireAuthenticatedUser, requireRo
 app.get('/api/v1/admin/reports/summary', requireAuthenticatedUser, requireRole('admin'), async (request, response, next) => {
   let range
   try { range = reportRange(request.query) } catch (error) { return response.status(400).json({ error: error.message }) }
-  const filter = "payment_status = 'paid' AND status <> 'cancelled' AND (paid_at AT TIME ZONE 'Asia/Kuching')::date >= $1::date AND (paid_at AT TIME ZONE 'Asia/Kuching')::date <= $2::date"
+  const filter = "(paid_at AT TIME ZONE 'Asia/Kuching')::date >= $1::date AND (paid_at AT TIME ZONE 'Asia/Kuching')::date <= $2::date"
   try {
     const [summary, methods, topFoods, statuses] = await Promise.all([
-      pool.query(`SELECT count(*)::int AS "transactionCount", COALESCE(sum(grand_total), 0) AS revenue, COALESCE(avg(grand_total), 0) AS "averageBill", COALESCE(max(grand_total), 0) AS "highestBill", COALESCE(min(grand_total), 0) AS "lowestBill" FROM orders WHERE ${filter}`, [range.start, range.end]),
-      pool.query(`SELECT COALESCE(payment_method, 'Other') AS method, COALESCE(sum(grand_total), 0) AS amount, count(*)::int AS "transactionCount" FROM orders WHERE ${filter} GROUP BY COALESCE(payment_method, 'Other') ORDER BY amount DESC`, [range.start, range.end]),
-      pool.query(`SELECT order_items.item_name AS name, COALESCE(sum(order_items.quantity), 0)::int AS quantity, COALESCE(sum(order_items.quantity * order_items.unit_price), 0) AS sales FROM orders JOIN order_items ON order_items.order_id = orders.id WHERE ${filter} GROUP BY order_items.item_name ORDER BY sales DESC, quantity DESC, name ASC LIMIT 10`, [range.start, range.end]),
+      pool.query(`SELECT count(*)::int AS "transactionCount", COALESCE(sum(amount), 0) AS revenue, COALESCE(avg(amount), 0) AS "averageBill", COALESCE(max(amount), 0) AS "highestBill", COALESCE(min(amount), 0) AS "lowestBill" FROM payments WHERE ${filter}`, [range.start, range.end]),
+      pool.query(`SELECT COALESCE(payment_method, 'Other') AS method, COALESCE(sum(amount), 0) AS amount, count(*)::int AS "transactionCount" FROM payments WHERE ${filter} GROUP BY COALESCE(payment_method, 'Other') ORDER BY amount DESC`, [range.start, range.end]),
+      pool.query(`SELECT item->>'name' AS name, sum((item->>'quantity')::integer)::int AS quantity, sum((item->>'quantity')::numeric * (item->>'price')::numeric) AS sales FROM payments CROSS JOIN LATERAL jsonb_array_elements(COALESCE(order_snapshot, '[]'::jsonb)) ticket CROSS JOIN LATERAL jsonb_array_elements(ticket->'items') item WHERE ${filter} GROUP BY item->>'name' ORDER BY sales DESC, quantity DESC, name ASC LIMIT 10`, [range.start, range.end]),
       pool.query(`SELECT status, count(*)::int AS count FROM orders WHERE (created_at AT TIME ZONE 'Asia/Kuching')::date >= $1::date AND (created_at AT TIME ZONE 'Asia/Kuching')::date <= $2::date GROUP BY status ORDER BY status`, [range.start, range.end]),
     ])
     return response.status(200).json({ range, summary: summary.rows[0], paymentMethods: methods.rows, topFoods: topFoods.rows, orderStatuses: statuses.rows })
   } catch (error) { return next(error) }
+})
+
+app.get('/api/v1/admin/payment-events', requireAuthenticatedUser, requireRole('admin'), async (_request, response, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT payments.id, payments.receipt_number AS "receiptNumber", payments.paid_at AS "paidAt", payments.payment_method AS "paymentMethod", payments.amount AS "grandTotal", COALESCE(payments.order_snapshot, '[]'::jsonb) AS orders FROM payments WHERE ${paidReceiptCondition} ORDER BY payments.paid_at DESC`)
+    response.json({ payments: rows.map((payment) => ({ ...payment, sessionIds: payment.orders.map((order) => order.sessionId).filter(Boolean), status: 'paid', paymentStatus: 'paid', items: payment.orders.flatMap((order) => order.items ?? []) })) })
+  } catch (error) { next(error) }
 })
 
 app.get('/api/v1/me', requireAuthenticatedUser, (request, response) => {
@@ -1262,8 +1309,8 @@ app.post('/api/v1/admin/tables/:tableId/clear', requireAuthenticatedUser, requir
       return response.status(200).json({ cleared: false, message: 'This table is already clear.' })
     }
     const tableSessionId = activeSession.rows[0].id
-    const outstanding = await client.query("SELECT 1 FROM orders WHERE table_session_id = $1 AND status <> 'cancelled' AND payment_status <> 'paid' LIMIT 1 FOR UPDATE", [tableSessionId])
-    if (outstanding.rowCount) throw new Error('This table has unpaid active orders and cannot be cleared.')
+    const outstanding = await client.query("SELECT 1 FROM orders WHERE table_session_id = $1 AND status <> 'cancelled' AND (payment_status <> 'paid' OR status <> 'served') LIMIT 1 FOR UPDATE", [tableSessionId])
+    if (outstanding.rowCount) throw new Error('This table has unpaid or undelivered items and cannot be cleared.')
     await client.query("UPDATE customer_sessions SET left_at = COALESCE(left_at, now()) WHERE table_session_id = $1", [tableSessionId])
     await client.query("UPDATE table_sessions SET status = 'completed', updated_at = now() WHERE id = $1", [tableSessionId])
     await client.query('COMMIT')
@@ -1323,8 +1370,9 @@ app.delete('/api/v1/admin/categories/:categoryId', requireAuthenticatedUser, req
 app.get('/api/v1/admin/menu-items', requireAuthenticatedUser, requireRole('admin', 'cashier', 'kitchen'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT menu_items.id, menu_items.name, menu_items.description, menu_items.price,
-        menu_items.image_url AS "imageUrl", menu_items.is_available AS "isAvailable",
+      SELECT menu_items.id, menu_items.name, menu_items.description, menu_items.price, menu_items.ingredients,
+        menu_items.allergy_information AS "allergyInformation",
+        menu_items.image_url AS "imageUrl", menu_items.option_groups AS "optionGroups", menu_items.is_available AS "isAvailable",
         menu_items.is_popular AS "isPopular", menu_items.category_id AS "categoryId",
         categories.name AS "categoryName", menu_items.created_at AS "createdAt", menu_items.updated_at AS "updatedAt"
       FROM menu_items LEFT JOIN categories ON categories.id = menu_items.category_id
@@ -1342,7 +1390,7 @@ app.post('/api/v1/admin/menu-items', requireAuthenticatedUser, requireRole('admi
       const category = await pool.query('SELECT 1 FROM categories WHERE id = $1', [input.categoryId])
       if (!category.rowCount) return response.status(400).json({ error: 'Choose an existing category.' })
     }
-    const { rows } = await pool.query('INSERT INTO menu_items (category_id, name, description, price, image_url, ingredients, allergy_information, is_available, is_popular) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9) RETURNING id, name, description, price, image_url AS "imageUrl", ingredients, allergy_information AS "allergyInformation", is_available AS "isAvailable", is_popular AS "isPopular", category_id AS "categoryId"', [input.categoryId, input.name, input.description, input.price, input.imageUrl, JSON.stringify(input.ingredients), JSON.stringify(input.allergyInformation), input.isAvailable, input.isPopular])
+    const { rows } = await pool.query('INSERT INTO menu_items (category_id, name, description, price, image_url, ingredients, allergy_information, is_available, is_popular, option_groups) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb) RETURNING id, name, description, price, image_url AS "imageUrl", ingredients, allergy_information AS "allergyInformation", is_available AS "isAvailable", is_popular AS "isPopular", category_id AS "categoryId", option_groups AS "optionGroups"', [input.categoryId, input.name, input.description, input.price, input.imageUrl, JSON.stringify(input.ingredients), JSON.stringify(input.allergyInformation), input.isAvailable, input.isPopular, JSON.stringify(input.optionGroups)])
     return response.status(201).json({ item: rows[0] })
   } catch (error) { return next(error) }
 })
@@ -1355,7 +1403,7 @@ app.patch('/api/v1/admin/menu-items/:itemId', requireAuthenticatedUser, requireR
       const category = await pool.query('SELECT 1 FROM categories WHERE id = $1', [input.categoryId])
       if (!category.rowCount) return response.status(400).json({ error: 'Choose an existing category.' })
     }
-    const { rows } = await pool.query('UPDATE menu_items SET category_id = $1, name = $2, description = $3, price = $4, image_url = $5, ingredients = $6::jsonb, allergy_information = $7::jsonb, is_available = $8, is_popular = $9, updated_at = now() WHERE id = $10 RETURNING id, name, description, price, image_url AS "imageUrl", ingredients, allergy_information AS "allergyInformation", is_available AS "isAvailable", is_popular AS "isPopular", category_id AS "categoryId"', [input.categoryId, input.name, input.description, input.price, input.imageUrl, JSON.stringify(input.ingredients), JSON.stringify(input.allergyInformation), input.isAvailable, input.isPopular, String(request.params.itemId ?? '')])
+    const { rows } = await pool.query('UPDATE menu_items SET category_id = $1, name = $2, description = $3, price = $4, image_url = $5, ingredients = $6::jsonb, allergy_information = $7::jsonb, is_available = $8, is_popular = $9, option_groups = $11::jsonb, updated_at = now() WHERE id = $10 RETURNING id, name, description, price, image_url AS "imageUrl", ingredients, allergy_information AS "allergyInformation", is_available AS "isAvailable", is_popular AS "isPopular", category_id AS "categoryId", option_groups AS "optionGroups"', [input.categoryId, input.name, input.description, input.price, input.imageUrl, JSON.stringify(input.ingredients), JSON.stringify(input.allergyInformation), input.isAvailable, input.isPopular, String(request.params.itemId ?? ''), JSON.stringify(input.optionGroups)])
     if (!rows[0]) return response.status(404).json({ error: 'This menu item no longer exists.' })
     return response.status(200).json({ item: rows[0] })
   } catch (error) { return next(error) }
