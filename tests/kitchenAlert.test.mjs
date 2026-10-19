@@ -34,14 +34,15 @@ function envelopeAt(node, time) {
   return previous.value
 }
 
-test('counter bell plays nine bright strikes with fixed pitches, not a siren sweep', () => {
+test('loud counter bell plays twelve fixed-pitch strikes for seven seconds without clipping', () => {
   const audio = fixture(); playKitchenAlert(audio.context)
-  assert.equal(audio.oscillators.length, 27)
-  assert.equal(new Set(audio.oscillators.map((node) => node.startTime)).size, 9)
-  assert.equal(audio.oscillators.filter((node) => node.type === 'triangle').length, 9)
+  assert.equal(audio.oscillators.length, 36)
+  assert.equal(new Set(audio.oscillators.map((node) => node.startTime)).size, 12)
+  assert.equal(audio.oscillators.filter((node) => node.type === 'triangle').length, 12)
   assert.ok(audio.oscillators.every((node) => node.frequencies.length === 1))
-  assert.ok(Math.abs(Math.max(...audio.oscillators.map((node) => node.stops[0])) - 14.62) < 0.001)
-  for (let time = 10; time < 15; time += 0.001) {
+  assert.ok(Math.abs(Math.max(...audio.oscillators.map((node) => node.stops[0])) - 17.21) < 0.001)
+  assert.ok(audio.gains.some((node) => envelopeAt(node, 10.18) > 0.58), 'Maintain a strong audible attack')
+  for (let time = 10; time < 18; time += 0.001) {
     const peakBound = audio.gains.reduce((total, node) => total + envelopeAt(node, time), 0)
     assert.ok(peakBound >= 0 && peakBound <= 1, 'Layered bells must retain headroom')
   }
@@ -58,6 +59,14 @@ test('muting stops all scheduled strikes once; completed nodes disconnect', () =
 
 // Exercise the actual dashboard playback callback without a browser or orders.
 const source = await readFile(new URL('../src/pages/kitchen/Dashboard.jsx', import.meta.url), 'utf8')
+test('kitchen sound defaults on, preserves an explicit mute and tolerates blocked storage', () => {
+  const preferenceSource = source.slice(source.indexOf('const soundPreferenceKey'), source.indexOf('function orderLabel'))
+  for (const [saved, expected] of [[null, true], ['true', true], ['false', false]]) {
+    const enabled = runInNewContext(preferenceSource + '; readSoundPreference()', { localStorage: { getItem: () => saved } })
+    assert.equal(enabled, expected)
+  }
+  assert.equal(runInNewContext(preferenceSource + '; readSoundPreference()', { localStorage: { getItem() { throw new Error('Blocked') } } }), true)
+})
 const callbackSource = source.slice(source.indexOf('const playAlert = useCallback('), source.indexOf('  useEffect(() => {\n    const alertKey'))
 function dashboardFixture({ enabled = true, mounted = true, state = 'running' } = {}) {
   let starts = 0, stops = 0, error = ''

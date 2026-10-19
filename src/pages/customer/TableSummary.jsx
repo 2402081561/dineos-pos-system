@@ -159,14 +159,14 @@ function TableSummary() {
                               <span>{t("Subtotal")}</span>
                               <strong className="text-slate-700">{formatCurrency(participant.subtotal)}</strong>
                             </p>
-                            <p className="flex justify-between text-slate-500">
+                            {Number(participant.serviceCharge) > 0 && <p className="flex justify-between text-slate-500">
                               <span>{t("Service charge")}</span>
                               <strong className="text-slate-700">{formatCurrency(participant.serviceCharge)}</strong>
-                            </p>
-                            <p className="flex justify-between text-slate-500">
+                            </p>}
+                            {Number(participant.sst) > 0 && <p className="flex justify-between text-slate-500">
                               <span>{t("SST")}</span>
                               <strong className="text-slate-700">{formatCurrency(participant.sst)}</strong>
-                            </p>
+                            </p>}
                             <p className="flex justify-between font-bold text-slate-800">
                               <span>{t("Grand total")}</span>
                               <strong className="text-orange-600">{formatCurrency(participant.grandTotal)}</strong>

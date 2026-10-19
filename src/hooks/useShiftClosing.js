@@ -16,6 +16,7 @@ function useShiftClosing() {
   const [closings, setClosings] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
+  const [refundSummary, setRefundSummary] = useState({ refundsAvailable: false, refundTotal: null })
 
   useEffect(() => {
     const onError = (apiError) => {
@@ -25,8 +26,10 @@ function useShiftClosing() {
     }
     return subscribeToSupabaseSettlement((data) => {
       setOrders(data.paidPayments.map((payment) => ({ ...payment, grandTotal: payment.amount })))
+      setRefundSummary(data.refundSummary ?? { refundsAvailable: false, refundTotal: null })
       setTodayOrders(data.todayOrders)
       setClosings(data.closings.map((closing) => ({ ...closing, ...(closing.summary ?? {}) })))
+      setError('')
       setIsLoading(false)
     }, onError)
   }, [])
@@ -46,6 +49,8 @@ function useShiftClosing() {
       ...breakdown,
       counts,
       grandTotal,
+      ...refundSummary,
+      netReceipts: refundSummary.refundsAvailable ? Math.round((grandTotal - refundSummary.refundTotal) * 100) / 100 : null,
       transactionCount,
       totalPaidOrders: transactionCount,
       pendingPayments: todayOrders.filter((order) => String(order.status).toLowerCase() === 'served' && String(order.paymentStatus ?? 'pending').toLowerCase() !== 'paid').length,
@@ -54,7 +59,7 @@ function useShiftClosing() {
       highestBill: bills.length ? Math.max(...bills) : 0,
       lowestBill: bills.length ? Math.min(...bills) : 0,
     }
-  }, [orders, todayOrders])
+  }, [orders, todayOrders, refundSummary])
 
   return { closings, error, isLoading, orders, summary }
 }

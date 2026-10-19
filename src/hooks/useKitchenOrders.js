@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getSupabaseKitchenOrders, subscribeToSupabaseKitchenOrders } from '../services/adminApiService'
+import { getSupabaseKitchenOrders } from '../services/adminApiService'
+import { watchPoll } from '../utils/pollSubscription'
 
 const acknowledgedAlertsKey = 'dineos.kitchenAcknowledgedOrderAlerts'
 
@@ -24,6 +25,7 @@ function useKitchenOrders() {
   const hasLoadedInitialSnapshotRef = useRef(false)
   const knownReceivedOrderIdsRef = useRef(new Set())
   const acknowledgedOrderIdsRef = useRef(null)
+  const subscription = useRef(null)
 
   const applyOrders = useCallback((activeOrders) => {
     const receivedOrderIds = new Set(activeOrders
@@ -50,18 +52,11 @@ function useKitchenOrders() {
     setIsLoading(false)
   }, [])
 
-  const refresh = useCallback(async () => {
-    try {
-      applyOrders(await getSupabaseKitchenOrders())
-    } catch (apiError) {
-      console.error('[useKitchenOrders] API kitchen refresh failed:', apiError)
-      setError(apiError instanceof Error && apiError.message ? apiError.message : 'We could not load kitchen orders right now. Please try again shortly.')
-      setIsLoading(false)
-    }
-  }, [applyOrders])
+  const refresh = useCallback(() => subscription.current?.refreshLatest(), [])
 
   useEffect(() => {
-    const unsubscribe = subscribeToSupabaseKitchenOrders(
+    const watcher = watchPoll(
+      getSupabaseKitchenOrders,
       applyOrders,
       (apiError) => {
         console.error('[useKitchenOrders] API kitchen subscription failed:', apiError)
@@ -71,9 +66,11 @@ function useKitchenOrders() {
         setError(message)
         setIsLoading(false)
       },
+      { interval: 5000 },
     )
+    subscription.current = watcher
 
-    return unsubscribe
+    return () => { watcher.stop(); subscription.current = null }
   }, [applyOrders])
 
   return { orders, isLoading, error, newOrderIds, refresh }

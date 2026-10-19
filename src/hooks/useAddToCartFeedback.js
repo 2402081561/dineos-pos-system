@@ -7,7 +7,7 @@ import { isMenuItemOrderable } from '../services/orderService'
 const wait = (duration) => new Promise((resolve) => setTimeout(resolve, duration))
 
 function useAddToCartFeedback() {
-  const { addToCart } = useCart()
+  const { addToCart, isCartLocked, getLastCartError } = useCart()
   const { showToast } = useToast()
   const navigate = useNavigate()
   const [status, setStatus] = useState('idle')
@@ -23,6 +23,7 @@ function useAddToCartFeedback() {
 
   async function addItem(menuItem, quantity = 1, specialInstructions = '', selections = [], orderType = 'dine_in') {
     if (isAddingRef.current) return
+    if (isCartLocked) { showToast('Your previous order is not confirmed yet. Retry it before changing your cart.', 'error'); return }
     if (!isMenuItemOrderable(menuItem) || !Number.isInteger(Number(quantity)) || Number(quantity) < 1) {
       showToast('This item is no longer available.', 'error')
       return
@@ -33,7 +34,8 @@ function useAddToCartFeedback() {
 
     try {
       await wait(150)
-      if (!addToCart(menuItem, quantity, specialInstructions, selections, orderType)) throw new Error('Please review the dish options and quantity.')
+      if (!isMountedRef.current) return
+      if (!addToCart(menuItem, quantity, specialInstructions, selections, orderType)) throw new Error(getLastCartError?.() || 'Please review the dish options and quantity.')
       if (isMountedRef.current) setStatus('added')
       showToast('✅ Added to Cart', 'success', {
         detail: `${menuItem.name} × ${quantity}`,
@@ -49,7 +51,7 @@ function useAddToCartFeedback() {
     }
   }
 
-  return { addItem, isAdding: status === 'adding', isAdded: status === 'added', isBusy: status !== 'idle' }
+  return { addItem, isAdding: status === 'adding', isAdded: status === 'added', isBusy: status !== 'idle' || Boolean(isCartLocked) }
 }
 
 export default useAddToCartFeedback

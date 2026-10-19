@@ -1,18 +1,25 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CustomerSessionContext } from './CustomerSessionContext'
 import { leaveTableSession, updateTableSessionParticipant } from '../services/tableSessionService'
 import { getCustomerSession } from '../services/customerApi'
+import { watchCustomerSession } from '../utils/customerSessionSubscription'
+import { customerVisitStorage } from '../utils/customerVisitStorage'
 
-// Shared-table mode deliberately keeps no customer token in browser storage.
-// A fresh visit scans the table QR and receives the database-owned table session.
-function saveSession() {}
-function removeStoredSession() {}
-function readStoredSession() { return null }
+// Cache the existing database-owned visit in this tab, not a new guest visit.
+// A restored visit is verified by the API before protected ordering pages open.
+const saveSession = (session) => customerVisitStorage.saveSession(session)
+const removeStoredSession = () => customerVisitStorage.clearSession()
+const readStoredSession = () => customerVisitStorage.readSession()
 
 function CustomerSessionProvider({ children }) {
   const [session, setSession] = useState(readStoredSession)
   const [tableSession, setTableSession] = useState(null)
   const [sessionError, setSessionError] = useState('')
+  const [isRestoring, setIsRestoring] = useState(Boolean(session))
+  const [restoreError, setRestoreError] = useState('')
+  const verification = useRef(null)
+  const activeVisitId = useRef(session?.sessionId)
+  const retryRestore = useCallback(() => { setRestoreError(''); return verification.current?.refresh() }, [])
 
   const startSession = useCallback((tableNumber, customerNickname, tableSessionId, sessionId, memberId = '', isSharedTable = false) => {
     const nextSession = {
@@ -24,7 +31,10 @@ function CustomerSessionProvider({ children }) {
       isSharedTable: Boolean(isSharedTable),
     }
     saveSession(nextSession)
+    activeVisitId.current = sessionId
     setSession(nextSession)
+    setIsRestoring(false)
+    setRestoreError('')
     setSessionError('')
     return nextSession
   }, [])
@@ -32,7 +42,7 @@ function CustomerSessionProvider({ children }) {
   const updateSessionNickname = useCallback(async (customerNickname) => {
     if (!session) throw new Error('Join an active table session before placing an order.')
     const normalizedNickname = String(customerNickname ?? '').trim() || 'Guest'
-    if (normalizedNickname.length > 20) throw new Error('Your name must be 20 characters or fewer.')
+    if (normalizedNickname.length > 80) throw new Error('Your name must be 80 characters or fewer.')
     if (session.customerNickname === normalizedNickname) return session
 
     await updateTableSessionParticipant({ ...session, customerNickname: normalizedNickname })
@@ -45,9 +55,12 @@ function CustomerSessionProvider({ children }) {
   const clearSession = useCallback(async () => {
     const sessionToClear = session
     removeStoredSession()
+    activeVisitId.current = null
     setSession(null)
     setTableSession(null)
     setSessionError('')
+    setIsRestoring(false)
+    setRestoreError('')
 
     try {
       if (sessionToClear?.tableSessionId && !sessionToClear.isSharedTable) await leaveTableSession(sessionToClear)
@@ -60,33 +73,33 @@ function CustomerSessionProvider({ children }) {
 
   useEffect(() => {
     if (!sessionId) return () => {}
-    let active = true
-    const verify = async () => {
-      try {
-        const verified = await getCustomerSession(sessionId)
-        if (!active) return
-        setSession((current) => {
-          if (!current) return current
-          const nextSession = { ...current, ...verified }
-          saveSession(nextSession)
-          return nextSession
-        })
-        setTableSession({ id: verified.tableSessionId, status: 'active' })
-        setSessionError('')
-      } catch {
-        if (!active) return
-        removeStoredSession()
-        setSession(null)
-        setTableSession(null)
-        setSessionError('Your previous table session has ended. Please scan the table QR code again.')
-      }
-    }
-    void verify()
-    const timer = window.setInterval(() => { void verify() }, 30000)
-    return () => { active = false; window.clearInterval(timer) }
+    const watcher = watchCustomerSession(() => getCustomerSession(sessionId), (verified) => {
+      if (activeVisitId.current !== sessionId) return
+      setSession((current) => {
+        if (current?.sessionId !== sessionId) return current
+        const nextSession = { ...current, ...verified }
+        saveSession(nextSession)
+        return nextSession
+      })
+      setTableSession({ id: verified.tableSessionId, status: 'active' })
+      setSessionError('')
+      setIsRestoring(false)
+      setRestoreError('')
+    }, () => {
+      if (activeVisitId.current !== sessionId) return
+      activeVisitId.current = null
+      removeStoredSession()
+      setSession(null)
+      setTableSession(null)
+      setSessionError('Your previous table session has ended. Please scan the table QR code again.')
+      setIsRestoring(false)
+      setRestoreError('')
+    }, { onUnavailable() { if (activeVisitId.current === sessionId) setRestoreError('We could not reconnect to your table. Your cart has been kept. Please try again.') } })
+    verification.current = watcher
+    return () => { watcher.stop(); verification.current = null }
   }, [sessionId])
 
-  return <CustomerSessionContext.Provider value={{ session, tableSession, sessionError, startSession, updateSessionNickname, clearSession }}>{children}</CustomerSessionContext.Provider>
+  return <CustomerSessionContext.Provider value={{ session, tableSession, sessionError, isRestoring, restoreError, retryRestore, startSession, updateSessionNickname, clearSession }}>{children}</CustomerSessionContext.Provider>
 }
 
 export default CustomerSessionProvider

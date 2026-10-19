@@ -1,3 +1,4 @@
+import { lazy } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import AdminLayout from '../layouts/AdminLayout'
 import CashierLayout from '../layouts/CashierLayout'
@@ -8,40 +9,42 @@ import CustomerLayout from '../layouts/CustomerLayout'
 import CustomerSessionRoute from '../components/customer/CustomerSessionRoute'
 import KitchenLayout from '../layouts/KitchenLayout'
 import StaffLayout from '../layouts/StaffLayout'
-import Login from '../pages/admin/Login'
-import CategoryManagement from '../pages/admin/CategoryManagement'
-import { default as AdminDashboard } from '../pages/admin/Dashboard'
-import MenuManagement from '../pages/admin/MenuManagement'
-import OrderManagement from '../pages/admin/OrderManagement'
-import Reports from '../pages/admin/Reports'
-import TableManagement from '../pages/admin/TableManagement'
-import AuditLog from '../pages/admin/AuditLog'
-import Members from '../pages/admin/Members'
-import Rewards from '../pages/admin/Rewards'
-import ShopSettings from '../pages/admin/ShopSettings'
-import Bill from '../pages/customer/Bill'
-import Cart from '../pages/customer/Cart'
-import FoodDetails from '../pages/customer/FoodDetails'
-import JoinSession from '../pages/customer/JoinSession'
-import Landing from '../pages/customer/Landing'
-import Menu from '../pages/customer/Menu'
-import More from '../pages/customer/More'
-import OrderHistory from '../pages/customer/OrderHistory'
-import ServiceRequests from '../pages/customer/ServiceRequests'
-import Tracking from '../pages/customer/Tracking'
-import TableSummary from '../pages/customer/TableSummary'
-import CustomerRewards from '../pages/customer/Rewards'
-import MemberProfile from '../pages/customer/MemberProfile'
-import KitchenDashboard from '../pages/kitchen/Dashboard'
-import StaffDashboard from '../pages/staff/Dashboard'
-import Requests from '../pages/staff/Requests'
-import Tables from '../pages/staff/Tables'
-import CashierDashboard from '../pages/cashier/Dashboard'
-import CashierNewOrder from '../pages/cashier/NewOrder'
-import Receipt from '../pages/cashier/Receipt'
-import ReceiptHistory from '../pages/cashier/ReceiptHistory'
-import ShiftClosing from '../pages/cashier/Closing'
-import ClosingDetails from '../pages/cashier/ClosingDetails'
+const Login = lazy(() => import('../pages/admin/Login'))
+const CategoryManagement = lazy(() => import('../pages/admin/CategoryManagement'))
+const AdminDashboard = lazy(() => import('../pages/admin/Dashboard'))
+const MenuManagement = lazy(() => import('../pages/admin/MenuManagement'))
+const OrderManagement = lazy(() => import('../pages/admin/OrderManagement'))
+const Reports = lazy(() => import('../pages/admin/Reports'))
+const TableManagement = lazy(() => import('../pages/admin/TableManagement'))
+const AuditLog = lazy(() => import('../pages/admin/AuditLog'))
+const Members = lazy(() => import('../pages/admin/Members'))
+const Rewards = lazy(() => import('../pages/admin/Rewards'))
+const ShopSettings = lazy(() => import('../pages/admin/ShopSettings'))
+const Bill = lazy(() => import('../pages/customer/Bill'))
+const Cart = lazy(() => import('../pages/customer/Cart'))
+const FoodDetails = lazy(() => import('../pages/customer/FoodDetails'))
+const JoinSession = lazy(() => import('../pages/customer/JoinSession'))
+const Landing = lazy(() => import('../pages/customer/Landing'))
+const Menu = lazy(() => import('../pages/customer/Menu'))
+const More = lazy(() => import('../pages/customer/More'))
+const OrderHistory = lazy(() => import('../pages/customer/OrderHistory'))
+const ServiceRequests = lazy(() => import('../pages/customer/ServiceRequests'))
+const Tracking = lazy(() => import('../pages/customer/Tracking'))
+const TableSummary = lazy(() => import('../pages/customer/TableSummary'))
+const CustomerRewards = lazy(() => import('../pages/customer/Rewards'))
+const MemberProfile = lazy(() => import('../pages/customer/MemberProfile'))
+const KitchenDashboard = lazy(() => import('../pages/kitchen/Dashboard'))
+const StaffDashboard = lazy(() => import('../pages/staff/Dashboard'))
+const Requests = lazy(() => import('../pages/staff/Requests'))
+const Tables = lazy(() => import('../pages/staff/Tables'))
+const CashierDashboard = lazy(() => import('../pages/cashier/Dashboard'))
+const CashierNewOrder = lazy(() => import('../pages/cashier/NewOrder'))
+const Receipt = lazy(() => import('../pages/cashier/Receipt'))
+const ReceiptHistory = lazy(() => import('../pages/cashier/ReceiptHistory'))
+const ShiftClosing = lazy(() => import('../pages/cashier/Closing'))
+const ClosingDetails = lazy(() => import('../pages/cashier/ClosingDetails'))
+const Refunds = lazy(() => import('../pages/admin/Refunds'))
+const RefundRecord = lazy(() => import('../pages/admin/RefundRecord'))
 
 function AppRoutes() {
   return (
@@ -49,8 +52,8 @@ function AppRoutes() {
       <Route element={<CustomerLayout />}>
         <Route index element={<Landing />} />
         <Route path="join" element={<JoinSession />} />
-        <Route path="tracking" element={<Tracking />} />
         <Route element={<CustomerSessionRoute />}>
+          <Route path="tracking" element={<Tracking />} />
           <Route path="menu" element={<Menu />} />
           <Route path="more" element={<More />} />
           <Route path="menu/:itemId" element={<FoodDetails />} />
@@ -86,11 +89,14 @@ function AppRoutes() {
       <Route path="admin" element={<ProtectedAdminRoute><AdminLayout /></ProtectedAdminRoute>}>
         <Route index element={<Navigate replace to="dashboard" />} />
         <Route path="dashboard" element={<AdminDashboard />} />
+        <Route path="kitchen" element={<KitchenDashboard />} />
         <Route path="menu" element={<MenuManagement />} />
         <Route path="categories" element={<CategoryManagement />} />
         <Route path="tables" element={<TableManagement />} />
         <Route path="orders" element={<OrderManagement />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="refunds" element={<Refunds />} />
+        <Route path="refunds/:refundNumber" element={<RefundRecord />} />
         <Route path="audit-log" element={<AuditLog />} />
         <Route path="members" element={<Members />} />
         <Route path="rewards" element={<Rewards />} />

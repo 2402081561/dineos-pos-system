@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import useCustomerSession from './useCustomerSession'
 import { getCustomerOrders, getCustomerTableSummary } from '../services/customerApi'
 import { ordersForParticipant } from '../utils/customerOrder'
+import { subscribePoll } from '../utils/pollSubscription'
 
 function getParticipantStatus(orders) {
   if (orders.length === 0) return 'No orders yet'
@@ -23,24 +24,31 @@ function useTableSummary() {
   useEffect(() => {
     if (!session?.sessionId) {
       setOrders([])
+      setSummaryParticipants([])
+      setPaymentStatus('no_orders')
+      setError('')
       setIsLoading(false)
       return () => {}
     }
 
-    let active = true
-    const load = async () => {
-      try {
-        const [summary, ownOrders] = await Promise.all([getCustomerTableSummary(session.sessionId), getCustomerOrders(session.sessionId)])
-        if (!active) return
-        setSummaryParticipants(summary.participants.map((participant) => ({ sessionId: participant.isCurrentCustomer ? session.sessionId : participant.id, customerNickname: participant.customerNickname, ...participant })))
-        setOrders(ownOrders.filter((order) => order.paymentStatus !== 'paid' && order.status !== 'cancelled'))
-        setPaymentStatus(summary.paymentStatus ?? 'no_orders')
-        setError('')
-      } catch { if (active) setError('We could not load your table summary right now. Please try again shortly.') } finally { if (active) setIsLoading(false) }
-    }
-    void load()
-    const timer = window.setInterval(() => { void load() }, 10000)
-    return () => { active = false; window.clearInterval(timer) }
+    setOrders([])
+    setSummaryParticipants([])
+    setPaymentStatus('no_orders')
+    setIsLoading(true)
+    setError('')
+    return subscribePoll(async () => {
+      const [summary, ownOrders] = await Promise.all([getCustomerTableSummary(session.sessionId), getCustomerOrders(session.sessionId)])
+      return { summary, ownOrders }
+    }, ({ summary, ownOrders }) => {
+      setSummaryParticipants(summary.participants.map((participant) => ({ sessionId: participant.isCurrentCustomer ? session.sessionId : participant.id, customerNickname: participant.customerNickname, ...participant })))
+      setOrders(ownOrders.filter((order) => order.paymentStatus !== 'paid' && order.status !== 'cancelled'))
+      setPaymentStatus(summary.paymentStatus ?? 'no_orders')
+      setError('')
+      setIsLoading(false)
+    }, () => {
+      setError('We could not load your table summary right now. Please try again shortly.')
+      setIsLoading(false)
+    })
   }, [session?.sessionId])
 
   const participants = useMemo(() => {

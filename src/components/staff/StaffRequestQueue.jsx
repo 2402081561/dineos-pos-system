@@ -1,3 +1,4 @@
+import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { useEffect, useRef, useState } from 'react'
 import StatePanel from '../common/StatePanel'
 import ServiceRequestCard from './ServiceRequestCard'
@@ -5,6 +6,8 @@ import ServiceRequestSkeleton from './ServiceRequestSkeleton'
 import { completeSupabaseServiceRequest } from '../../services/adminApiService'
 
 function StaffRequestQueue({ compact = false, error, isLoading, onRefresh, requests }) {
+  const { t: uiText } = useCustomerLanguage()
+
   const [updatingRequestIds, setUpdatingRequestIds] = useState(new Set())
   const [updateError, setUpdateError] = useState('')
   const updatingRequestIdsRef = useRef(new Set())
@@ -17,7 +20,7 @@ function StaffRequestQueue({ compact = false, error, isLoading, onRefresh, reque
   }, [])
 
   async function handleCompleteRequest(requestId) {
-    if (updatingRequestIdsRef.current.has(requestId)) return
+    if (error || updatingRequestIdsRef.current.has(requestId)) return
 
     try {
       updatingRequestIdsRef.current.add(requestId)
@@ -40,8 +43,8 @@ function StaffRequestQueue({ compact = false, error, isLoading, onRefresh, reque
   }
 
   if (isLoading) return <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{Array.from({ length: compact ? 3 : 6 }, (_, index) => <ServiceRequestSkeleton key={index} />)}</div>
-  if (error) return <StatePanel description={error} title="Service requests unavailable" tone="error" />
-  return <>{updateError && <StatePanel description={updateError} title="Request update failed" tone="error" />}{visibleRequests.length === 0 ? <StatePanel description="New customer requests will appear here automatically." title="No active service requests." /> : <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{visibleRequests.map((request) => <ServiceRequestCard isUpdating={updatingRequestIds.has(request.id)} key={request.id} onComplete={handleCompleteRequest} request={request} />)}</div>}</>
+  if (error && requests.length === 0) return <StatePanel description={uiText(error)} title={uiText("Service requests unavailable")} tone="error" />
+  return <>{updateError && <StatePanel description={uiText(updateError)} title={uiText("Request update failed")} tone="error" />}{visibleRequests.length === 0 ? <StatePanel description={uiText("New customer requests will appear here automatically.")} title={uiText("No active service requests.")} /> : <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{visibleRequests.map((request) => <ServiceRequestCard isUpdating={Boolean(error) || updatingRequestIds.has(request.id)} key={request.id} onComplete={handleCompleteRequest} request={request} />)}</div>}</>
 }
 
 export default StaffRequestQueue

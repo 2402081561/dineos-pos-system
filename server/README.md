@@ -1,5 +1,9 @@
 # DineOS Node.js + PostgreSQL API
 
+Member email OTP setup and safe legacy-member linking:
+[MEMBER_EMAIL_OTP.md](MEMBER_EMAIL_OTP.md). Apply migration 029 and configure
+Supabase SMTP before enabling email verification for actual customers.
+
 This is a new, independent backend foundation. It does not connect to, migrate, or modify the current Firebase database.
 
 ## Local setup

@@ -3,38 +3,33 @@ import { subscribeToCustomerOrders } from '../services/orderService'
 import useCustomerSession from './useCustomerSession'
 
 function useCustomerOrders() {
-  const { session } = useCustomerSession()
+  const { session, isRestoring } = useCustomerSession()
   const sessionId = session?.sessionId
-  const [orders, setOrders] = useState([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [snapshot, setSnapshot] = useState({ sessionId, orders: [], isLoading: Boolean(sessionId), error: '' })
 
   useEffect(() => {
-    if (!sessionId) {
-      setOrders([])
-      setIsLoading(false)
+    if (!sessionId || isRestoring) {
+      setSnapshot({ sessionId, orders: [], isLoading: Boolean(sessionId && isRestoring), error: '' })
       return () => {}
     }
 
-    setIsLoading(true)
+    setSnapshot({ sessionId, orders: [], isLoading: true, error: '' })
     const unsubscribe = subscribeToCustomerOrders(
       { sessionId },
       (customerOrders) => {
-        setOrders(customerOrders)
-        setError('')
-        setIsLoading(false)
+        setSnapshot({ sessionId, orders: customerOrders, error: '', isLoading: false })
       },
       (firebaseError) => {
         console.error('[useCustomerOrders] Firestore order subscription failed:', firebaseError)
-        setError('We could not load your orders right now. Please try again shortly.')
-        setIsLoading(false)
+        setSnapshot((current) => ({ ...current, sessionId, error: 'We could not load your orders right now. Please try again shortly.', isLoading: false }))
       },
     )
 
     return unsubscribe
-  }, [sessionId])
+  }, [sessionId, isRestoring])
 
-  return { orders, isLoading, error }
+  // Mask the previous visit immediately, before the effect's cleanup runs.
+  return sessionId && !isRestoring && snapshot.sessionId === sessionId ? snapshot : { orders: [], isLoading: Boolean(sessionId), error: '' }
 }
 
 export default useCustomerOrders

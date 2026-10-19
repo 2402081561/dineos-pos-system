@@ -1,5 +1,14 @@
 import { createInstance } from 'i18next'
 import { customerChinese } from './customerTranslations.js'
+import { operationalChinese } from './operationalTranslations.js'
+
+const chinese = { ...operationalChinese, ...customerChinese }
+const normalizedKeys = new Map(Object.keys(chinese).map((key) => [key.toLowerCase(), key]))
+const dynamicKeys = Object.keys(chinese).filter((key) => key.includes('{{')).map((key) => {
+  const tokens = [...key.matchAll(/{{(\w+)}}/g)].map((match) => match[1])
+  const pattern = key.split(/{{\w+}}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('(.+?)')
+  return { key, tokens, pattern: new RegExp(`^${pattern}$`) }
+})
 
 export const CUSTOMER_LANGUAGE_KEY = 'dineos:customer-language'
 
@@ -25,7 +34,7 @@ export function createCustomerI18n(language = readCustomerLanguage()) {
     interpolation: { escapeValue: false },
     resources: {
       en: { translation: {
-        ...Object.fromEntries(Object.keys(customerChinese).map((key) => [key, key.replace(/_(one|other)$/, '')])),
+        ...Object.fromEntries(Object.keys(chinese).map((key) => [key, key.replace(/_(one|other)$/, '')])),
         '{{count}} items_one': '{{count}} item',
         'View cart, {{count}} items_one': 'View cart, {{count}} item',
         'View cart, {{count}} items_other': 'View cart, {{count}} items',
@@ -36,7 +45,7 @@ export function createCustomerI18n(language = readCustomerLanguage()) {
         '{{count}} items added to your cart._one': '{{count}} item added to your cart.',
         '{{count}} items added to your cart._other': '{{count}} items added to your cart.',
       } },
-      zh: { translation: customerChinese },
+      zh: { translation: chinese },
     },
   })
   return instance
@@ -47,6 +56,8 @@ export function createCustomerI18n(language = readCustomerLanguage()) {
 export function translateCustomerText(instance, text, options = {}) {
   if (typeof text !== 'string') return text
   if (instance.exists(text)) return instance.t(text, options)
+  const normalized = normalizedKeys.get(text.toLowerCase())
+  if (normalized) return instance.t(normalized, { ...options, defaultValue: text })
   const minutes = /^(\d+)–(\d+) mins$/.exec(text)
   if (minutes) return instance.t('{{min}}–{{max}} mins', { min: minutes[1], max: minutes[2] })
   const table = /^Table (\d+|—)$/.exec(text)
@@ -65,11 +76,15 @@ export function translateCustomerText(instance, text, options = {}) {
       return instance.t(`{{name}} ${ending}`, { name: name === 'This item' ? instance.t('This item') : name })
     }
   }
+  for (const { key, tokens, pattern } of dynamicKeys) {
+    const match = pattern.exec(text)
+    if (match) return instance.t(key, { ...Object.fromEntries(tokens.map((token, index) => [token, match[index + 1]])), ...options })
+  }
   return instance.t(text, { defaultValue: text, ...options })
 }
 
 export function formatCustomerDate(value, locale = 'en-MY') {
   if (!value) return ''
   const date = value?.toDate?.() ?? new Date(value)
-  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(locale, { timeZone: 'Asia/Kuching', dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }

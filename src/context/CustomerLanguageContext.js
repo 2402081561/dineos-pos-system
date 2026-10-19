@@ -5,7 +5,7 @@ const english = (text, options = {}) => typeof text === 'string'
   ? text.replace(/{{(\w+)}}/g, (match, key) => options[key] === undefined ? match : String(options[key]))
   : text
 
-// Shared controls retain English when rendered outside the customer layout.
+// English fallback for isolated component previews outside the app provider.
 export const CustomerLanguageContext = createContext({
   language: 'en', locale: 'en-MY', t: english,
   formatDate: formatCustomerDate,

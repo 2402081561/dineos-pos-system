@@ -13,9 +13,16 @@ import { PosValidationError, validateOptionGroups } from './posRules.js'
 import { registerTakeAwayRoutes } from './takeAwayOrders.js'
 import { validateOrderType, resolveItemOrderTypes, summarizeOrderType } from './orderType.js'
 import { registerOrderChangeRoutes } from './orderChanges.js'
+import { registerOrderDetailsRoute } from './orderDetails.js'
+import { registerPaymentRecoveryRoute } from './paymentRecovery.js'
+import { registerCustomerRequestHistory } from './customerRequests.js'
+import { registerRefundRoutes, loadDailyRefundTotals } from './refunds.js'
 import { FloorLayoutConflictError, FloorLayoutValidationError, validateFloorLayoutUpdate } from './tableFloorLayout.js'
 import { validateFreePlan } from './freeFloorLayout.js'
 import { registerKitchenEstimateRoutes, loadKitchenEstimates } from './kitchenEstimate.js'
+import { createSupabaseTokenVerifier, createAuthenticatedUserMiddleware } from './authentication.js'
+import { startApiServer } from './startServer.js'
+import { createVerifiedMemberMiddleware, registerMemberEmailRoutes } from './memberEmailAuth.js'
 
 const { Pool } = pg
 const port = Number(process.env.PORT) || 4000
@@ -24,7 +31,6 @@ const isDevelopment = process.env.NODE_ENV !== 'production'
 const supabaseUrl = String(process.env.SUPABASE_URL ?? '').replace(/\/$/, '')
 const app = express()
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
-let jwksCache = { expiresAt: 0, keys: new Map() }
 
 app.disable('x-powered-by')
 app.use(cors({
@@ -45,54 +51,17 @@ function positiveInteger(value) {
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-function base64UrlJson(value) {
-  return JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'))
-}
-
-async function signingKey(kid) {
-  if (!supabaseUrl) throw new Error('Supabase authentication is not configured.')
-  if (Date.now() >= jwksCache.expiresAt) {
-    const result = await fetch(`${supabaseUrl}/auth/v1/.well-known/jwks.json`)
-    if (!result.ok) throw new Error('Could not load Supabase signing keys.')
-    const { keys } = await result.json()
-    jwksCache = { expiresAt: Date.now() + 60 * 60 * 1000, keys: new Map((keys ?? []).filter((key) => key?.kid).map((key) => [key.kid, key])) }
-  }
-  const key = jwksCache.keys.get(kid)
-  if (!key) throw new Error('The access token signing key is unknown.')
-  return key
-}
-
-async function verifySupabaseAccessToken(token) {
-  const [encodedHeader, encodedPayload, encodedSignature, ...rest] = String(token).split('.')
-  if (!encodedHeader || !encodedPayload || !encodedSignature || rest.length) throw new Error('Malformed access token.')
-  const header = base64UrlJson(encodedHeader)
-  const payload = base64UrlJson(encodedPayload)
-  if (!header?.kid || !['RS256', 'ES256', 'EdDSA'].includes(header.alg)) throw new Error('Unsupported access token.')
-  if (payload?.iss !== `${supabaseUrl}/auth/v1` || payload?.aud !== 'authenticated' || !payload?.sub || !Number.isFinite(Number(payload.exp)) || Number(payload.exp) * 1000 <= Date.now()) throw new Error('Expired or invalid access token.')
-  const key = await signingKey(header.kid)
-  const algorithm = header.alg === 'RS256'
-    ? { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }
-    : header.alg === 'ES256' ? { name: 'ECDSA', namedCurve: 'P-256', hash: 'SHA-256' } : { name: 'Ed25519' }
-  const imported = await crypto.subtle.importKey('jwk', key, algorithm, false, ['verify'])
-  const valid = await crypto.subtle.verify(algorithm, imported, Buffer.from(encodedSignature, 'base64url'), Buffer.from(`${encodedHeader}.${encodedPayload}`))
-  if (!valid) throw new Error('Invalid access token signature.')
-  return payload
-}
-
-async function requireAuthenticatedUser(request, response, next) {
-  const match = /^Bearer\s+(.+)$/i.exec(request.get('authorization') ?? '')
-  if (!match) return response.status(401).json({ error: 'Authentication is required.' })
-  try {
-    const claims = await verifySupabaseAccessToken(match[1])
-    const { rows } = await pool.query('SELECT id, email, display_name AS "displayName", role FROM users WHERE auth_user_id = $1', [claims.sub])
-    if (!rows[0]) return response.status(403).json({ error: 'This account has not been assigned a DineOS role. Sign out and sign in again after the account is provisioned.' })
-    request.user = rows[0]
-    return next()
-  } catch (error) {
-    console.warn('[API] Authentication rejected:', error.message)
-    return response.status(401).json({ error: 'Your session is invalid or has expired.' })
-  }
-}
+const verifySupabaseAccessToken = createSupabaseTokenVerifier({ supabaseUrl })
+const requireAuthenticatedUser = createAuthenticatedUserMiddleware({ verifyToken: verifySupabaseAccessToken, pool })
+const memberPublishableKey = String(process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY ?? '').trim()
+const memberEmailOtpEnabled = process.env.MEMBER_EMAIL_OTP_ENABLED === 'true' && Boolean(supabaseUrl && memberPublishableKey)
+const requireVerifiedMember = createVerifiedMemberMiddleware({ supabaseUrl, publishableKey: memberPublishableKey, enabled: memberEmailOtpEnabled })
+registerPaymentRecoveryRoute(app, { pool, requireAuthenticatedUser, requireRole })
+registerCustomerRequestHistory(app, { pool, requireCustomerSession })
+registerRefundRoutes(app, { pool, requireAuthenticatedUser, requireRole })
+app.get('/api/v1/public/member-auth-config', (_request, response) => {
+  response.set('Cache-Control', 'no-store').json({ emailOtpEnabled: memberEmailOtpEnabled })
+})
 
 async function requireCustomerSession(request, response, next) {
   const token = String(request.get('x-customer-session') ?? '').trim()
@@ -234,11 +203,6 @@ function memberInput(input) {
   return { name, phone, normalizedPhone, email: email || null, emailNotificationsEnabled: input?.emailNotificationsEnabled === true }
 }
 
-function memberNumber(value) {
-  const normalized = String(value ?? '').trim().toUpperCase()
-  return /^MEM-\d{5,}$/.test(normalized) ? normalized : ''
-}
-
 function memberResponse(row) {
   return {
     id: row.id,
@@ -274,6 +238,7 @@ async function logAuditEvent({ action, actorId = null, targetType = null, target
 registerShopSettingsRoutes(app, { pool, requireAuthenticatedUser, requireRole, logAuditEvent })
 registerKitchenEstimateRoutes(app, { pool })
 registerOrderChangeRoutes(app, { pool, requireAuthenticatedUser, requireRole })
+registerOrderDetailsRoute(app, { pool, requireAuthenticatedUser, requireRole })
 registerHandoffRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 
 async function insertPreparedOrder(client, { tableSessionId, customerSessionId, memberId = null, cartItems, requestId, publicOrder = false, settingsRevision, orderType }) {
@@ -390,53 +355,7 @@ app.get('/api/v1/public/member', requireCustomerSession, async (request, respons
   } catch (error) { return next(error) }
 })
 
-app.post('/api/v1/public/members', requireCustomerSession, async (request, response, next) => {
-  if (request.customerSession.memberId) return response.status(409).json({ error: 'A member is already linked to this session.' })
-  let input
-  try { input = memberInput(request.body) } catch (error) { return response.status(400).json({ error: error.message }) }
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const { rows } = await client.query(`INSERT INTO members (name, phone_normalized, phone_display, email, email_notifications_enabled)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, concat('MEM-', lpad(member_number::text, 5, '0')) AS "memberId", name,
-        phone_display AS phone, email, points_balance AS "pointsBalance", status,
-        email_notifications_enabled AS "emailNotificationsEnabled"`, [input.name, input.normalizedPhone, input.phone, input.email, input.emailNotificationsEnabled])
-    const session = await personalMemberSession(client, request.customerSession, rows[0])
-    await client.query('COMMIT')
-    return response.status(201).json({ member: memberResponse(rows[0]), session })
-  } catch (error) {
-    await client.query('ROLLBACK')
-    if (error.code === '23505') return response.status(409).json({ error: 'A membership already exists for this phone number.' })
-    return next(error)
-  } finally { client.release() }
-})
-
-app.post('/api/v1/public/members/login', requireCustomerSession, async (request, response, next) => {
-  const requestedMemberId = memberNumber(request.body?.memberId)
-  const normalizedPhone = normalizeMemberPhone(request.body?.phone)
-  if (!requestedMemberId || !normalizedPhone) return response.status(400).json({ error: 'Enter a valid Member ID and phone number.' })
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const { rows } = await client.query(`SELECT id, concat('MEM-', lpad(member_number::text, 5, '0')) AS "memberId",
-      name, phone_display AS phone, email, points_balance AS "pointsBalance", status,
-      email_notifications_enabled AS "emailNotificationsEnabled"
-      FROM members
-      WHERE concat('MEM-', lpad(member_number::text, 5, '0')) = $1 AND phone_normalized = $2
-      FOR UPDATE`, [requestedMemberId, normalizedPhone])
-    if (!rows[0] || rows[0].status !== 'active') {
-      await client.query('ROLLBACK')
-      return response.status(401).json({ error: 'The Member ID or phone number is incorrect.' })
-    }
-    const session = await personalMemberSession(client, request.customerSession, rows[0])
-    await client.query('COMMIT')
-    return response.status(200).json({ member: memberResponse(rows[0]), session })
-  } catch (error) {
-    await client.query('ROLLBACK')
-    return next(error)
-  } finally { client.release() }
-})
+registerMemberEmailRoutes(app, { pool, requireCustomerSession, requireVerifiedMember, memberInput, memberResponse, personalMemberSession })
 
 app.get('/api/v1/public/rewards', requireCustomerSession, async (_request, response, next) => {
   try {
@@ -657,7 +576,7 @@ app.post('/api/v1/cashier/payments', requireAuthenticatedUser, requireRole('admi
       const saved = previous.rows[0]
       if (saved.request_fingerprint !== fingerprint || saved.cashier_id !== request.user.id) throw new PosValidationError('This payment request was already used for a different bill.', 409)
       await client.query('COMMIT')
-      return response.json({ payment: { receiptNumber: saved.receipt_number, paidAt: saved.paid_at, amount: saved.amount, cashReceived: saved.cash_received, changeAmount: saved.change_amount, tableId: saved.tableId, tableNumber: saved.tableNumber } })
+      return response.json({ payment: { receiptNumber: saved.receipt_number, paidAt: saved.paid_at, amount: saved.amount, cashReceived: saved.cash_received, changeAmount: saved.change_amount, tableId: saved.tableId, tableNumber: saved.tableNumber, tableSessionId: saved.table_session_id } })
     }
     const { rows: orders } = await client.query(`
       SELECT orders.id, orders.order_type AS "orderType", orders.table_session_id AS "tableSessionId", orders.customer_session_id AS "sessionId", (SELECT nickname FROM customer_sessions WHERE id = orders.customer_session_id) AS "customerNickname", orders.member_id AS "memberId", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber",
@@ -724,7 +643,7 @@ app.post('/api/v1/cashier/payments', requireAuthenticatedUser, requireRole('admi
     }
     await client.query('COMMIT')
     void logAuditEvent({ action: 'COMPLETE_PAYMENT', actorId: request.user.id, targetType: 'receipt', targetId: receiptNumber, details: { tableNumber: orders[0].tableNumber, paymentMethod, amount, ...(paymentMethod === 'Cash' ? { cashReceived, changeAmount } : {}), ...(loyalty ? { pointsEarned: loyalty.points } : {}) } })
-    return response.status(201).json({ payment: { ...payment.rows[0], tableId: orders[0].tableId, tableNumber: orders[0].tableNumber, paymentMethod, orderIds: finalOrders.map((order) => order.id), loyalty } })
+    return response.status(201).json({ payment: { ...payment.rows[0], tableSessionId, tableId: orders[0].tableId, tableNumber: orders[0].tableNumber, paymentMethod, orderIds: finalOrders.map((order) => order.id), loyalty } })
   } catch (error) {
     await client.query('ROLLBACK')
     if (error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
@@ -775,7 +694,8 @@ app.post('/api/v1/cashier/shift-closings', requireAuthenticatedUser, requireRole
     for (const payment of payments) breakdown[methodKey[payment.paymentMethod] ?? 'other'] += Number(payment.amount) || 0
     Object.keys(breakdown).forEach((key) => { breakdown[key] = roundMoney(breakdown[key]) })
     const grandTotal = roundMoney(Object.values(breakdown).reduce((total, value) => total + value, 0))
-    const summary = { ...breakdown, grandTotal, transactionCount: payments.length, averageBill: payments.length ? roundMoney(grandTotal / payments.length) : 0 }
+    const refundSummary = await loadDailyRefundTotals(pool, shiftDate)
+    const summary = { ...breakdown, grandTotal, ...refundSummary, netReceipts: refundSummary.refundsAvailable ? roundMoney(grandTotal - refundSummary.refundTotal) : null, transactionCount: payments.length, averageBill: payments.length ? roundMoney(grandTotal / payments.length) : 0 }
     const closingId = `CL-${shiftDate.replaceAll('-', '')}-0001`
     const { rows } = await pool.query('INSERT INTO shift_closings (closing_id, shift_date, cashier_name, summary) VALUES ($1, $2, $3, $4::jsonb) RETURNING closing_id AS "closingId", shift_date AS "shiftDate", cashier_name AS "cashierName", summary, closed_at AS "closedAt"', [closingId, shiftDate.replaceAll('-', ''), request.user.displayName, JSON.stringify(summary)])
     void logAuditEvent({ action: 'CLOSE_SHIFT', actorId: request.user.id, targetType: 'shiftClosing', targetId: closingId, details: summary })
@@ -789,7 +709,7 @@ app.post('/api/v1/cashier/shift-closings', requireAuthenticatedUser, requireRole
 app.post('/api/v1/public/service-requests', requireCustomerSession, async (request, response, next) => {
   const requestType = String(request.body?.requestType ?? '').trim().slice(0, 80)
   const note = String(request.body?.note ?? '').trim().slice(0, 500)
-  if (!requestType) return response.status(400).json({ error: 'Choose a service request type.' })
+  if (!['callWaiter', 'requestBill', 'water', 'extraSpoon'].includes(requestType)) return response.status(400).json({ error: 'Choose a service request type.' })
   try {
     const details = note ? { note } : {}
     if (requestType === 'requestBill') {
@@ -871,7 +791,7 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
       ORDER BY orders.updated_at DESC
     `)
     const { rows: clearableTables } = await pool.query(`
-      SELECT restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber"
+      SELECT restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber", table_sessions.id AS "tableSessionId"
       FROM restaurant_tables
       JOIN table_sessions ON table_sessions.table_id = restaurant_tables.id AND table_sessions.status = 'active'
       WHERE NOT EXISTS (
@@ -1069,7 +989,8 @@ app.get('/api/v1/cashier/settlement', requireAuthenticatedUser, requireRole('adm
       pool.query("SELECT id, status, payment_status AS \"paymentStatus\", grand_total AS \"grandTotal\", created_at AS \"createdAt\" FROM orders WHERE (created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date", [date]),
       pool.query('SELECT closing_id AS "closingId", shift_date AS "shiftDate", cashier_name AS "cashierName", summary, closed_at AS "closedAt" FROM shift_closings ORDER BY closed_at DESC LIMIT 100'),
     ])
-    response.status(200).json({ paidPayments: paid.rows, todayOrders: todayOrders.rows, closings: closings.rows })
+    const refundSummary = await loadDailyRefundTotals(pool, date)
+    response.status(200).json({ paidPayments: paid.rows, todayOrders: todayOrders.rows, closings: closings.rows, refundSummary })
   } catch (error) { next(error) }
 })
 
@@ -1163,7 +1084,7 @@ app.get('/api/v1/admin/members/:memberId/points', requireAuthenticatedUser, requ
       WHERE members.id::text = $1 OR concat('MEM-', lpad(members.member_number::text, 5, '0')) = $1
       ORDER BY member_point_transactions.created_at DESC LIMIT 50
     `, [memberKey])
-    response.status(200).json({ transactions: rows.map((row) => ({ ...row, source: row.type === 'EARN' ? 'PAYMENT' : 'REWARD' })) })
+    response.status(200).json({ transactions: rows.map((row) => ({ ...row, source: row.type === 'EARN' ? 'PAYMENT' : row.type === 'REFUND' ? 'REFUND' : 'REWARD' })) })
   } catch (error) { next(error) }
 })
 
@@ -1309,6 +1230,7 @@ app.post('/api/v1/admin/tables/:tableId/clear', requireAuthenticatedUser, requir
       return response.status(200).json({ cleared: false, message: 'This table is already clear.' })
     }
     const tableSessionId = activeSession.rows[0].id
+    if (Object.hasOwn(request.body ?? {}, 'expectedTableSessionId') && request.body.expectedTableSessionId !== tableSessionId) throw new PosValidationError('The table visit has changed. Refresh the table panel before clearing it.', 409)
     const outstanding = await client.query("SELECT 1 FROM orders WHERE table_session_id = $1 AND status <> 'cancelled' AND (payment_status <> 'paid' OR status <> 'served') LIMIT 1 FOR UPDATE", [tableSessionId])
     if (outstanding.rowCount) throw new Error('This table has unpaid or undelivered items and cannot be cleared.')
     await client.query("UPDATE customer_sessions SET left_at = COALESCE(left_at, now()) WHERE table_session_id = $1", [tableSessionId])
@@ -1318,7 +1240,8 @@ app.post('/api/v1/admin/tables/:tableId/clear', requireAuthenticatedUser, requir
     return response.status(200).json({ cleared: true, tableNumber: table.rows[0].tableNumber })
   } catch (error) {
     await client.query('ROLLBACK')
-    if (String(error.message).includes('unpaid active orders')) return response.status(409).json({ error: error.message })
+    if (error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
+    if (String(error.message).includes('unpaid active orders') || String(error.message).includes('unpaid or undelivered')) return response.status(409).json({ error: error.message })
     if (String(error.message).includes('no longer exists')) return response.status(404).json({ error: error.message })
     return next(error)
   } finally { client.release() }
@@ -1433,5 +1356,8 @@ app.use((error, _request, response, _next) => {
 
 app.use((_request, response) => response.status(404).json({ error: 'Route not found.' }))
 
-app.listen(port, () => console.info(`[API] DineOS PostgreSQL API listening on port ${port}`))
+startApiServer(app, port, { onError() {
+  process.exitCode = 1
+  void pool.end().catch(() => console.error('[API] Failed to close database pool after startup failure.'))
+} })
   const textList = (value) => Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean).slice(0, 50) : String(value ?? '').split(',').map((item) => item.trim()).filter(Boolean).slice(0, 50)

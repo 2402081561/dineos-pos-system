@@ -21,6 +21,8 @@ migrations.push('025_legacy_item_order_type_default.sql')
 migrations.push('026_partial_payments_and_handoffs.sql')
 migrations.push('027_table_appearance.sql')
 migrations.push('028_free_floor_plan.sql')
+migrations.push('029_member_email_otp.sql')
+migrations.push('030_refund_records.sql')
 const { Pool } = pg
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 

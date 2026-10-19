@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getPublicMenu } from '../services/customerApi'
+import { subscribePoll } from '../utils/pollSubscription'
 
 function useMenu() {
   const [categories, setCategories] = useState([])
@@ -8,19 +9,12 @@ function useMenu() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    let active = true
-    const load = async () => {
-      try {
-        const items = await getPublicMenu()
-        if (!active) return
-        setMenuItems(items)
-        setCategories([...new Map(items.filter((item) => item.categoryId && item.categoryName).map((item) => [item.categoryId, { id: item.categoryId, name: item.categoryName, sortOrder: item.categorySortOrder }])).values()].sort((first, second) => Number(first.sortOrder) - Number(second.sortOrder)))
-        setError('')
-      } catch (loadError) { if (active) setError(loadError.message || 'We could not load the menu right now.') } finally { if (active) setIsLoading(false) }
-    }
-    void load()
-    const timer = window.setInterval(() => { void load() }, 30000)
-    return () => { active = false; window.clearInterval(timer) }
+    return subscribePoll(getPublicMenu, (items) => {
+      setMenuItems(items)
+      setCategories([...new Map(items.filter((item) => item.categoryId && item.categoryName).map((item) => [item.categoryId, { id: item.categoryId, name: item.categoryName, sortOrder: item.categorySortOrder }])).values()].sort((first, second) => Number(first.sortOrder) - Number(second.sortOrder)))
+      setError('')
+      setIsLoading(false)
+    }, (loadError) => { setError(loadError.message || 'We could not load the menu right now.'); setIsLoading(false) }, 30000)
   }, [])
 
   const popularItems = useMemo(

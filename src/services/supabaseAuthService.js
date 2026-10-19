@@ -1,18 +1,10 @@
 import { createClient } from '@supabase/supabase-js'
+import { createTabAuthStorage } from '../utils/authStorage'
 
 const url = String(import.meta.env.VITE_SUPABASE_URL ?? '').trim().replace(/\/$/, '')
 const publishableKey = String(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? '').trim()
 const apiUrl = String(import.meta.env.VITE_API_URL ?? 'http://localhost:4000').trim().replace(/\/$/, '')
-const authStorage = typeof window !== 'undefined' ? window.sessionStorage : undefined
-const authTabIdKey = 'dineos-auth-tab-id'
-const authTabId = (() => {
-  if (!authStorage) return 'server'
-  const existing = authStorage.getItem(authTabIdKey)
-  if (existing) return existing
-  const created = crypto.randomUUID()
-  authStorage.setItem(authTabIdKey, created)
-  return created
-})()
+const { storage: authStorage, tabId: authTabId } = createTabAuthStorage()
 
 const supabase = url && publishableKey ? createClient(url, publishableKey, {
   auth: {
@@ -46,9 +38,10 @@ export async function getSupabaseAccessToken() {
   return data.session.access_token
 }
 
-async function sendAuthenticatedRequest(path, { body, method, headers = {} }, accessToken) {
+async function sendAuthenticatedRequest(path, { body, method, headers = {}, signal }, accessToken) {
   const response = await fetch(`${apiUrl}${path}`, {
     method,
+    signal,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       ...(body ? { 'Content-Type': 'application/json' } : {}),
@@ -60,15 +53,17 @@ async function sendAuthenticatedRequest(path, { body, method, headers = {} }, ac
   return { data, response }
 }
 
-export async function authenticatedApiRequest(path, { body, method = 'GET', headers = {} } = {}) {
+export async function authenticatedApiRequest(path, { body, method = 'GET', headers = {}, signal } = {}) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('You are offline. Orders and payments cannot be sent until you reconnect.')
+  signal = signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000)
   let accessToken = await getSupabaseAccessToken()
-  let result = await sendAuthenticatedRequest(path, { body, method, headers }, accessToken)
+  let result = await sendAuthenticatedRequest(path, { body, method, headers, signal }, accessToken)
 
   if (result.response.status === 401 && supabase) {
     const { data: refreshed, error } = await supabase.auth.refreshSession()
     if (!error && refreshed.session?.access_token) {
       accessToken = refreshed.session.access_token
-      result = await sendAuthenticatedRequest(path, { body, method, headers }, accessToken)
+      result = await sendAuthenticatedRequest(path, { body, method, headers, signal }, accessToken)
     }
   }
 

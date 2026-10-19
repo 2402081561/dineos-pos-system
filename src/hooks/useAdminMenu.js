@@ -15,6 +15,7 @@ function useAdminMenu() {
         if (isMounted) {
           setCategories(categoryData.map((category) => ({ ...category, isActive: category.isEnabled })))
           setMenuItems(items)
+          setError('')
           setIsLoading(false)
         }
       },

@@ -10,7 +10,8 @@
     "db:schema": "node scripts/apply-schema.js",
     "migrate:firestore-snapshot": "node scripts/migrate-firestore-snapshot.js",
     "map:firestore-snapshot": "node scripts/map-firestore-snapshot.js",
-    "users:provision": "node scripts/provision-user.js"
+    "users:provision": "node scripts/provision-user.js",
+    "members:link-email": "node scripts/link-member-email.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

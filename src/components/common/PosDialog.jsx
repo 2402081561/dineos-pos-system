@@ -1,8 +1,11 @@
+import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import Button from './Button'
 
 export default function PosDialog({ title, onClose, busy = false, children }) {
+  const { t: uiText } = useCustomerLanguage()
+
   const ref = useRef(null)
   const titleId = useId()
   useEffect(() => {
@@ -22,7 +25,7 @@ export default function PosDialog({ title, onClose, busy = false, children }) {
   }
   return createPortal(<div className="fixed inset-0 z-[70] overflow-y-auto bg-slate-950/50 p-3 sm:p-6">
     <section ref={ref} tabIndex={-1} aria-labelledby={titleId} aria-modal="true" role="dialog" onKeyDown={keyDown} className="mx-auto my-3 max-w-3xl rounded-2xl bg-white shadow-xl outline-none">
-      <header className="sticky top-0 z-10 flex items-center justify-between gap-3 rounded-t-2xl border-b bg-white p-4"><h2 id={titleId} className="text-lg font-bold">{title}</h2><Button disabled={busy} variant="outline" onClick={onClose}>Close</Button></header>
+      <header className="sticky top-0 z-10 flex items-center justify-between gap-3 rounded-t-2xl border-b bg-white p-4"><h2 id={titleId} className="text-lg font-bold">{uiText(title)}</h2><Button disabled={busy} variant="outline" onClick={onClose}>{uiText("Close")}</Button></header>
       <div className="p-4 sm:p-6">{children}</div>
     </section>
   </div>, document.body)

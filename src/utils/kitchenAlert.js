@@ -1,7 +1,8 @@
 // Bright counter-bell strikes, not a doorbell melody or a sweeping siren.
-// Three short bursts are easier to identify over background kitchen noise.
+// Four full-volume bursts with longer attacks stand out over kitchen noise.
+// Keep strikes separate and below digital full scale to avoid clipping.
 export function playKitchenAlert(context) {
-  const offsets = [0, 0.28, 0.56, 1.65, 1.93, 2.21, 3.3, 3.58, 3.86]
+  const offsets = [0, 0.4, 0.8, 2, 2.4, 2.8, 4, 4.4, 4.8, 6, 6.4, 6.8]
   const voices = [
     { frequency: 1174.66, type: 'triangle', weight: 0.6 },
     { frequency: 1760, type: 'sine', weight: 0.28 },
@@ -18,15 +19,15 @@ export function playKitchenAlert(context) {
       oscillator.type = voice.type
       oscillator.frequency.setValueAtTime(voice.frequency, strike)
       envelope.gain.setValueAtTime(0, strike)
-      envelope.gain.linearRampToValueAtTime(0.9 * voice.weight, strike + 0.004)
-      envelope.gain.setValueAtTime(0.9 * voice.weight, strike + 0.07)
-      envelope.gain.exponentialRampToValueAtTime(0.0001 * voice.weight, strike + 0.65)
-      envelope.gain.linearRampToValueAtTime(0, strike + 0.75)
+      envelope.gain.linearRampToValueAtTime(0.98 * voice.weight, strike + 0.004)
+      envelope.gain.setValueAtTime(0.98 * voice.weight, strike + 0.18)
+      envelope.gain.exponentialRampToValueAtTime(0.0001 * voice.weight, strike + 0.38)
+      envelope.gain.linearRampToValueAtTime(0, strike + 0.4)
       oscillator.connect(envelope)
       envelope.connect(context.destination)
       oscillator.onended = () => { oscillator.disconnect(); envelope.disconnect() }
       oscillator.start(strike)
-      oscillator.stop(strike + 0.75)
+      oscillator.stop(strike + 0.4)
       nodes.push(oscillator)
     }
   }

@@ -26,7 +26,7 @@ function groupBy(items, getKey) {
   }, new Map())
 }
 
-function calculateAnalytics({ categories, menuItems, orders, requests, tables, payments = [] }, range) {
+export function calculateAnalytics({ categories, menuItems, orders, requests, tables, payments = [], refunds = [], refundsAvailable = false }, range) {
   const filteredOrders = orders.filter((order) => isWithinRange(order.createdAt, range))
   const filteredRequests = requests.filter((request) => isWithinRange(request.createdAt, range))
   const servedOrders = filteredOrders.filter((order) => completedStatuses.has(String(order.status).toLowerCase()))
@@ -35,6 +35,8 @@ function calculateAnalytics({ categories, menuItems, orders, requests, tables, p
     && isWithinRange(order.paidAt, range))
   const validOrders = filteredOrders.filter((order) => !cancelledStatuses.has(String(order.status).toLowerCase()))
   const totalRevenue = paidOrders.reduce((sum, order) => sum + nonNegativeNumber(order.grandTotal), 0)
+  const periodRefunds = refunds.filter((refund) => isWithinRange(refund.createdAt, range))
+  const refundAmount = periodRefunds.reduce((sum, refund) => sum + nonNegativeNumber(refund.amount), 0)
   const totalItems = paidOrders.reduce((sum, order) => sum + (Array.isArray(order.items) ? order.items : []).reduce((itemSum, item) => itemSum + nonNegativeNumber(item?.quantity), 0), 0)
   const uniqueCustomers = new Set(paidOrders.flatMap((order) => order.sessionIds ?? [order.sessionId || order.customerNickname]).filter(Boolean)).size
   const menuById = new Map(menuItems.map((item) => [item.id, item]))
@@ -101,9 +103,13 @@ function calculateAnalytics({ categories, menuItems, orders, requests, tables, p
 
   return {
     filteredOrders,
+    periodRefunds,
+    refundsAvailable,
     recentOrders: [...filteredOrders].sort((first, second) => (toDate(second.createdAt)?.getTime() ?? 0) - (toDate(first.createdAt)?.getTime() ?? 0)).slice(0, 10),
     summary: {
       totalRevenue,
+      refundAmount: refundsAvailable ? refundAmount : null,
+      netRevenue: refundsAvailable ? Math.round((totalRevenue - refundAmount) * 100) / 100 : null,
       totalOrders: filteredOrders.length,
       averageOrderValue: paidOrders.length ? totalRevenue / paidOrders.length : 0,
       activeTables: new Set(orders.filter((order) => activeStatuses.has(String(order.status).toLowerCase())).map((order) => order.tableNumber ?? order.tableId).filter(Boolean)).size,

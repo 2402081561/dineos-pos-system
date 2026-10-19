@@ -1,13 +1,16 @@
+import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { useEffect, useState } from 'react'
 import Button from '../common/Button'
 import { findSupabaseCashierMember } from '../../services/adminApiService'
 import PointsHistory from '../member/PointsHistory'
 
 function formatPoints(value) {
-  return `${Math.max(0, Math.floor(Number(value) || 0))} points`
+  return `${Math.floor(Number(value) || 0)} points`
 }
 
 function MemberLookup({ associatedMemberId = '', onMemberChange }) {
+  const { t: uiText } = useCustomerLanguage()
+
   const [search, setSearch] = useState('')
   const [member, setMember] = useState(null)
   const [error, setError] = useState('')
@@ -38,7 +41,7 @@ function MemberLookup({ associatedMemberId = '', onMemberChange }) {
       setError('We could not look up this member right now. Please try again.')
     } finally { setIsSearching(false) }
   }
-  return <section className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm"><p className="eyebrow">Membership</p><h2 className="mt-1 font-bold text-slate-900">{associatedMemberId ? 'Associated member' : 'Member lookup'}</h2>{associatedMemberId && <p className="mt-1 text-xs text-slate-500">Points can only be awarded to the member recorded on every order in this payment.</p>}<form className="mt-4 flex gap-2" onSubmit={handleSearch}><input className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm" onChange={(event) => setSearch(event.target.value)} placeholder="Phone or MEM-00001" value={search} /><Button disabled={!search.trim()} isLoading={isSearching} type="submit" variant="outline">Search</Button></form>{error && <p className="mt-3 text-sm font-medium text-red-700">{error}</p>}{member && <><div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm"><p className="font-bold text-slate-900">{member.name || '—'}</p><p className="mt-1 text-slate-500">{member.memberId || '—'} · {member.status || 'active'}</p><p className="mt-3 flex justify-between"><span>Points balance</span><span className="font-bold">{formatPoints(member.pointsBalance)}</span></p></div><div className="mt-4"><PointsHistory memberId={member.memberId} showFilters /></div></>}</section>
+  return <section className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm"><p className="eyebrow">{uiText("Membership")}</p><h2 className="mt-1 font-bold text-slate-900">{associatedMemberId ? uiText("Associated member") : uiText("Member lookup")}</h2>{associatedMemberId && <p className="mt-1 text-xs text-slate-500">{uiText("Points can only be awarded to the member recorded on every order in this payment.")}</p>}<form className="mt-4 flex gap-2" onSubmit={handleSearch}><input className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm" onChange={(event) => setSearch(event.target.value)} placeholder={uiText("Phone or MEM-00001")} value={search} /><Button disabled={!search.trim()} isLoading={isSearching} type="submit" variant="outline">{uiText("Search")}</Button></form>{error && <p className="mt-3 text-sm font-medium text-red-700">{uiText(error)}</p>}{member && <><div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm"><p className="font-bold text-slate-900">{member.name || '—'}</p><p className="mt-1 text-slate-500">{member.memberId || '—'} · {uiText(member.status || 'active')}</p><p className="mt-3 flex justify-between"><span>{uiText("Points balance")}</span><span className="font-bold">{uiText(formatPoints(member.pointsBalance))}</span></p></div><div className="mt-4"><PointsHistory memberId={member.memberId} showFilters /></div></>}</section>
 }
 
 export default MemberLookup

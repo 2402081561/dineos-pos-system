@@ -16,6 +16,7 @@ export function settlementLines(closing) {
     `Other: ${formatCurrency(closing.other)}`,
     '----------------------------------------',
     `Grand total: ${formatCurrency(closing.grandTotal)}`,
+    ...(closing.refundsAvailable ? [`Refunds: ${formatCurrency(closing.refundTotal)}`, `Net receipts: ${formatCurrency(closing.netReceipts)}`] : ['Refund totals: unavailable for this snapshot']),
     `Transactions: ${closing.transactionCount}`,
     `Average bill: ${formatCurrency(closing.averageBill)}`,
     `Highest bill: ${formatCurrency(closing.highestBill)}`,

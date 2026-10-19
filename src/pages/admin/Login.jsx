@@ -1,10 +1,14 @@
+import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import useShopSettings from '../../hooks/useShopSettings'
+import LanguageSwitch from '../../components/customer/LanguageSwitch'
 import Button from '../../components/common/Button'
 import useAdminAuth from '../../hooks/useAdminAuth'
 
 function Login() {
+  const { t: uiText } = useCustomerLanguage()
+
   const { name } = useShopSettings()
   const navigate = useNavigate()
   const location = useLocation()
@@ -35,11 +39,10 @@ function Login() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-8">
-      <div className="w-full max-w-md">
-        <Link className="mb-6 inline-block text-sm font-medium text-orange-300" to="/">
-          ← Back to {name}
+      <div className="w-full max-w-md"><div className="mb-4 flex justify-end"><LanguageSwitch /></div>
+        <Link className="mb-6 inline-block text-sm font-medium text-orange-300" to="/">{uiText("← Back to")}{' '}{name}
         </Link>
-        <form className="rounded-3xl bg-white p-7 shadow-2xl sm:p-9" onSubmit={handleSubmit}><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-600 text-xl text-white">⌁</div><p className="eyebrow mt-7">{name} · Control Centre</p><h1 className="mt-1 text-3xl font-bold">Welcome back</h1><p className="mt-3 text-sm text-slate-500">Sign in to manage your restaurant.</p><label className="mt-7 block text-sm font-bold" htmlFor="email">Email address</label><input className="mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none focus:border-orange-400" id="email" onChange={(event) => setEmail(event.target.value)} placeholder="admin@dineos.com" required type="email" value={email} /><label className="mt-5 block text-sm font-bold" htmlFor="password">Password</label><input className="mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none focus:border-orange-400" id="password" onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" required type="password" value={password} />{error && <p className="mt-4 rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-medium text-red-700">{error}</p>}<Button className="mt-6 w-full py-3" disabled={isLoading} type="submit">{isLoading ? 'Signing in...' : 'Sign in'}</Button></form>
+        <form className="rounded-3xl bg-white p-7 shadow-2xl sm:p-9" onSubmit={handleSubmit}><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-600 text-xl text-white">⌁</div><p className="eyebrow mt-7">{name}{' '}{uiText("· Control Centre")}</p><h1 className="mt-1 text-3xl font-bold">{uiText("Welcome back")}</h1><p className="mt-3 text-sm text-slate-500">{uiText("Sign in to manage your restaurant.")}</p><label className="mt-7 block text-sm font-bold" htmlFor="email">{uiText("Email address")}</label><input className="mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none focus:border-orange-400" id="email" onChange={(event) => setEmail(event.target.value)} placeholder={uiText("admin@dineos.com")} required type="email" value={email} /><label className="mt-5 block text-sm font-bold" htmlFor="password">{uiText("Password")}</label><input className="mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none focus:border-orange-400" id="password" onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" required type="password" value={password} />{error && <p className="mt-4 rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-medium text-red-700">{uiText(error)}</p>}<Button className="mt-6 w-full py-3" disabled={isLoading} type="submit">{isLoading ? uiText("Signing in...") : uiText("Sign in")}</Button></form>
       </div>
     </main>
   )

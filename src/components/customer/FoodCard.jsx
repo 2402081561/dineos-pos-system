@@ -1,6 +1,7 @@
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { Link, useNavigate } from 'react-router-dom'
 import Button from '../common/Button'
+import SoldOutButton from './SoldOutButton'
 import useAddToCartFeedback from '../../hooks/useAddToCartFeedback'
 import { formatCurrency } from '../../utils/currency'
 import { getImageSource, useImageFallback } from '../../utils/image'
@@ -15,10 +16,10 @@ function FoodCard({ categoryName = '', food, compact = false }) {
 
   return <article className={`interactive-card group flex flex-col overflow-hidden ${compact ? '' : 'h-full'}`}>
     <Link aria-label={t('View {{name}}', { name: food.name })} className="relative block overflow-hidden bg-slate-100" to={`/menu/${food.id}`}>
-      <img alt={food.name || t("Menu item")} className={`w-full object-cover transition duration-500 ease-out group-hover:scale-105 ${compact ? 'h-28' : 'aspect-[4/3]'}`} decoding="async" loading="lazy" onError={useImageFallback} src={getImageSource(food.imageUrl)} />
+      <img alt={food.name || t("Menu item")} className={`w-full object-cover transition duration-500 ease-out ${isUnavailable ? 'grayscale' : 'group-hover:scale-105'} ${compact ? 'h-28' : 'aspect-[4/3]'}`} decoding="async" loading="lazy" onError={useImageFallback} src={getImageSource(food.imageUrl)} />
       <div className="absolute inset-x-0 top-0 flex flex-wrap gap-2 p-3">
         {food.isPopular && <span className="rounded-full bg-orange-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm">{t("Popular")}</span>}
-        {isUnavailable && <span className="rounded-full bg-slate-900/85 px-2.5 py-1 text-[11px] font-bold text-white">{t("Sold out")}</span>}
+        {isUnavailable && <span className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-extrabold text-white shadow-sm">{t("Sold out")}</span>}
       </div>
     </Link>
     <div className="flex min-w-0 flex-1 flex-col p-3 sm:p-5">
@@ -29,8 +30,7 @@ function FoodCard({ categoryName = '', food, compact = false }) {
       </div>
       <p className="mb-3 mt-2 line-clamp-2 text-xs leading-5 text-slate-500 sm:mb-5 sm:mt-3 sm:text-sm">{food.description || t("No description is available for this item.")}</p>
       <div className="mt-auto border-t border-slate-100 pt-3 sm:pt-4">
-        {isUnavailable && <span className="mb-2 block text-xs leading-5 text-slate-500">{t("Currently unavailable")}</span>}
-        <Button className="min-h-11 w-full px-2 text-sm" disabled={isUnavailable || isBusy} onClick={() => hasOptions ? navigate(`/menu/${food.id}`) : addItem(food)}>{isAdding ? t("Adding...") : isAdded ? t("✔ Added") : hasOptions ? t("Choose options") : t("Add to Cart")}</Button>
+        {isUnavailable ? <SoldOutButton className="w-full" /> : <Button className="min-h-11 w-full px-2 text-sm" disabled={isBusy} onClick={() => hasOptions ? navigate(`/menu/${food.id}`) : addItem(food)}>{isAdding ? t("Adding...") : isAdded ? t("✔ Added") : hasOptions ? t("Choose options") : t("Add to Cart")}</Button>}
       </div>
     </div>
   </article>

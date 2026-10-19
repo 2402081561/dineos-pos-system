@@ -8,11 +8,13 @@ import { formatCurrency } from '../../utils/currency'
 function amount(transaction) {
   const points = Number(transaction?.points)
   if (!Number.isFinite(points)) return 0
-  if (String(transaction?.type).toUpperCase() === 'REDEEM') return -Math.abs(Math.floor(points))
+  if (['REDEEM', 'REFUND'].includes(String(transaction?.type).toUpperCase())) return -Math.abs(Math.floor(points))
   return Math.abs(Math.floor(points))
 }
 function PointsHistory({ memberId, sessionId = '', showFilters = false }) {
-  const { t, formatDate } = useCustomerLanguage()
+  const { t: uiText, formatDate: uiDate } = useCustomerLanguage()
+
+  const { t } = useCustomerLanguage()
   const [items, setItems] = useState([])
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
@@ -102,6 +104,7 @@ function PointsHistory({ memberId, sessionId = '', showFilters = false }) {
               <option value="all">{t("All activity")}</option>
               <option value="EARN">{t("Earned")}</option>
               <option value="REDEEM">{t("Redeemed")}</option>
+              <option value="REFUND">{t('Refund points reversal')}</option>
             </select>
             <input
               className="w-full min-w-0 rounded-xl border border-slate-200 px-3 py-2 text-sm"
@@ -137,9 +140,9 @@ function PointsHistory({ memberId, sessionId = '', showFilters = false }) {
               <article className="flex items-start justify-between gap-4 p-5" key={item.id}>
               <div className="min-w-0">
                 <p className="font-bold text-slate-900">
-                    {earned ? t("Points earned") : t("Points redeemed")}
+                    {String(item.type).toUpperCase() === 'REFUND' ? t('Refund points reversal') : earned ? t("Points earned") : t("Points redeemed")}
                   </p>
-                <p className="mt-1 break-words text-sm text-slate-600">{label}</p>
+                <p className="mt-1 break-words text-sm text-slate-600">{uiText(label)}</p>
                   {earned && Number.isFinite(Number(item.eligibleSpending)) && (
                     <p className="mt-1 text-xs text-slate-500">{t("Eligible spending:")}{' '}{formatCurrency(item.eligibleSpending)}
                     </p>
@@ -148,7 +151,7 @@ function PointsHistory({ memberId, sessionId = '', showFilters = false }) {
                     <p className="mt-1 text-xs text-slate-500">{item.redemptionReference}</p>
                   )}
                   <p className="mt-2 text-xs text-slate-400">
-                    {formatDate(item.createdAt) || t('Date unavailable')} · {item.source || '—'}
+                    {uiDate(item.createdAt) || t('Date unavailable')} · {item.source || '—'}
                   </p>
                 </div>
                 <p

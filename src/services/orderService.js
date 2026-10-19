@@ -1,5 +1,6 @@
 import { cancelCustomerOrder as cancelCustomerOrderRequest, getCustomerOrders, placeCustomerOrder } from './customerApi'
 import { resolveOptions } from '../../server/src/posRules'
+import { subscribePoll } from '../utils/pollSubscription'
 
 function finiteNonNegative(value) {
   const number = Number(value)
@@ -61,14 +62,7 @@ export async function createOrder({ cartItems, session, requestId, settingsRevis
 
 export function subscribeToCustomerOrders(session, onOrdersUpdate, onError) {
   if (!session?.sessionId) { onOrdersUpdate([]); return () => {} }
-  let active = true
-  const load = async () => {
-    try { const orders = await getCustomerOrders(session.sessionId); if (active) onOrdersUpdate(orders) }
-    catch (error) { if (active) onError(error) }
-  }
-  void load()
-  const timer = window.setInterval(() => { void load() }, 10000)
-  return () => { active = false; window.clearInterval(timer) }
+  return subscribePoll(() => getCustomerOrders(session.sessionId), onOrdersUpdate, onError)
 }
 
 export function subscribeToLatestCustomerOrder(session, onOrderUpdate, onError) {

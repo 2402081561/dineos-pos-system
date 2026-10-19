@@ -2,6 +2,8 @@ import { useId } from 'react'
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 
 export default function OrderTypeSelector({ value, onChange, disabled = false, compact = false }) {
+  const { t: uiText } = useCustomerLanguage()
+
   const { t } = useCustomerLanguage()
   const name = useId()
   return <fieldset className="mt-4 min-w-0" disabled={disabled}>
@@ -11,6 +13,6 @@ export default function OrderTypeSelector({ value, onChange, disabled = false, c
         <input type="radio" className="h-4 w-4 accent-orange-600" name={name} value={type} checked={value === type} onChange={() => onChange(type)} />{t(label)}
       </label>)}
     </div>
-    {!compact && <p className="mt-2 text-xs leading-5 text-slate-500">{t(value === 'take_away' ? 'This item will be packed for take away.' : 'Served at your table.')}</p>}
+    {!compact && <p className="mt-2 text-xs leading-5 text-slate-500">{t(value === 'take_away' ? uiText("This item will be packed for take away.") : uiText("Served at your table."))}</p>}
   </fieldset>
 }

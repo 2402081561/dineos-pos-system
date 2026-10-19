@@ -16,7 +16,7 @@ function CashierLayout() {
     ? [{ label: '← Back to Admin', to: '/admin/dashboard' }, ...cashierNavigation]
     : cashierNavigation
 
-  return <PortalLayout area="Cashier" navigation={navigation} wideWorkspace={pathname === '/cashier/new-order'} />
+  return <PortalLayout area="Cashier" navigation={navigation} wideWorkspace={pathname === '/cashier' || pathname === '/cashier/new-order'} subdued={pathname === '/cashier'} />
 }
 
 export default CashierLayout

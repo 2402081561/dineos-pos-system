@@ -1,26 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedApiRequest } from '../services/supabaseAuthService'
+import { watchPoll } from '../utils/pollSubscription'
 
 export default function useTakeAwayOrders() {
   const [orders, setOrders] = useState([])
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
-  const mounted = useRef(false)
-  const loading = useRef(false)
-  const refresh = useCallback(async () => {
-    if (loading.current) return
-    loading.current = true
-    try {
-      const data = await authenticatedApiRequest('/api/v1/staff/take-away-orders')
-      if (mounted.current) { setOrders(data.orders ?? []); setError('') }
-    } catch { if (mounted.current) setError('Take-away orders could not be loaded. Please retry.') }
-    finally { loading.current = false; if (mounted.current) setIsLoading(false) }
-  }, [])
+  const subscription = useRef(null)
+  const refresh = useCallback(() => subscription.current?.refresh(), [])
   useEffect(() => {
-    mounted.current = true
-    void refresh()
-    const timer = window.setInterval(() => { void refresh() }, 5000)
-    return () => { mounted.current = false; window.clearInterval(timer) }
-  }, [refresh])
+    const watcher = watchPoll(() => authenticatedApiRequest('/api/v1/staff/take-away-orders'), (data) => {
+      setOrders(data.orders ?? []); setError(''); setIsLoading(false)
+    }, () => { setError('Take-away orders could not be loaded. Please retry.'); setIsLoading(false) }, { interval: 5000 })
+    subscription.current = watcher
+    return () => { watcher.stop(); subscription.current = null }
+  }, [])
   return { orders, error, isLoading, refresh }
 }

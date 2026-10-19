@@ -9,9 +9,13 @@ import ToastProvider from './context/ToastProvider'
 import ShopSettingsProvider from './context/ShopSettingsProvider'
 import ToastViewport from './components/common/ToastViewport'
 import './styles/index.css'
+import CustomerLanguageProvider from './context/CustomerLanguageProvider'
+import { AppErrorBoundary } from './components/common/PageErrorBoundary'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
+    <AppErrorBoundary>
+    <CustomerLanguageProvider>
     <ShopSettingsProvider>
       <AdminAuthProvider>
         <ToastProvider>
@@ -26,5 +30,7 @@ createRoot(document.getElementById('root')).render(
         </ToastProvider>
       </AdminAuthProvider>
     </ShopSettingsProvider>
+    </CustomerLanguageProvider>
+    </AppErrorBoundary>
   </StrictMode>,
 )
