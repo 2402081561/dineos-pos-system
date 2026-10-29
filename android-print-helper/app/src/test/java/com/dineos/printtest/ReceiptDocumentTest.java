@@ -19,6 +19,11 @@ public class ReceiptDocumentTest {
         assertEquals("R-001", receipt.receiptNumber); assertEquals(3, receipt.rows.size());
         assertTrue(receipt.preview().contains("新🐔煮炒 Sinma")); assertTrue(receipt.preview().contains("1× 炒面  RM 9.00"));
     }
+    @Test public void kitchenTicketsHaveDistinctKind() throws Exception {
+        ReceiptDocument kitchen = ReceiptDocument.parse(document().put("kind", "kitchen_ticket").toString());
+        assertTrue(kitchen.kitchen);
+        assertFalse(ReceiptDocument.parse(document().toString()).kitchen);
+    }
     @Test public void rejectsOversizeAndInvalidEncoding() {
         for (String value : new String[]{"", "a".repeat(42668), "../test", "a#Intent;", "_w"}) assertThrows(JSONException.class, () -> ReceiptDocument.decode(value));
     }

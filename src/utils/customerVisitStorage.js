@@ -80,7 +80,17 @@ export function createCustomerVisitStorage({ getStorage = () => window.sessionSt
       const safe = validSession(session)
       if (!safe) return
       const previous = read(sessionKey)?.session
-      if (!sameCustomerVisit(previous, safe)) remove(cartKey)
+      if (!sameCustomerVisit(previous, safe)) {
+        // Only an API-verified merge can rebase a cart. A normal new visit still
+        // clears it. Retain the original uncertain request ID and frozen items.
+        const draft = read(cartKey)
+        if (previous?.sessionId === safe.sessionId && Array.isArray(session.previousTableSessionIds) && session.previousTableSessionIds.includes(previous.tableSessionId) && sameCustomerVisit(draft,previous) && validItems(draft.items)) {
+          const items=validItems(draft.items)
+          const old=draft.orderRequest
+          const request=old && uuid.test(old.id) && old.signature===customerOrderFingerprint(items,previous) ? {...old,signature:customerOrderFingerprint(items,safe)} : null
+          write(cartKey,{...draft,tableSessionId:safe.tableSessionId,items,orderRequest:request})
+        } else remove(cartKey)
+      }
       write(sessionKey, { version: 1, session: safe })
     },
     clearSession() { remove(sessionKey); remove(cartKey) },

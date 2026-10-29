@@ -1,4 +1,7 @@
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
+import OrderIdentifiers from '../common/OrderIdentifiers'
+import TableVisitMoveControls from './TableVisitMoveControls'
+import { hasSavedTableVisitTools } from '../../utils/deploymentFeatures'
 import OrderTypeBadge from '../common/OrderTypeBadge'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -47,6 +50,7 @@ export default function TableOrderManager({ table, onClose, onPay }) {
     finally { setBusy(false) }
   }
   return <PosDialog title={uiText("Table {{v0}} · Orders", { v0: table.tableNumber })} onClose={onClose} busy={busy}>
+    {hasSavedTableVisitTools&&!draft&&<TableVisitMoveControls table={table} onDone={onClose}/>}
     {!draft && onPay && <Button className="mb-4" onClick={onPay}>{uiText("Pay selected items / table bill")}</Button>}
     {!draft && <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-500">{uiText("Orders in this table visit · refreshes every 5 seconds.")}</p>{orders.some((order) => order.tableSessionStatus === 'active') && <Link className="rounded-lg bg-orange-600 px-3 py-2 text-sm font-bold text-white" to={`/cashier/new-order?tableId=${encodeURIComponent(table.id)}`} onClick={onClose}>{uiText("+ Add order")}</Link>}</div>}
     {loading && <p role="status">{uiText("Loading orders...")}</p>}
@@ -66,6 +70,7 @@ export default function TableOrderManager({ table, onClose, onPay }) {
     </form> : <div className="space-y-4">{orders.map((order) => {
       const editable = order.tableSessionStatus === 'active' && !order.items.some((item) => item.paidQuantity > 0 || item.fulfilledQuantity > 0) && order.paymentStatus !== 'paid' && ['received', 'preparing', 'ready'].includes(order.status) && (order.status === 'received' || user?.role === 'admin')
       return <article className="rounded-xl border border-slate-200 p-4" key={order.id}>
+        {hasSavedTableVisitTools&&<OrderIdentifiers orderId={order.id}/>}
         <div className="flex flex-wrap justify-between gap-2"><div><strong>{order.orderNumber}</strong><OrderTypeBadge orderType={order.orderType} className="ml-2" /><p className="mt-1 text-xs capitalize text-slate-500">{uiText(order.customerNickname || 'Guest')} · {uiText(order.status)} · {uiText(order.paymentStatus)}</p></div><strong className="text-orange-600">{formatCurrency(order.grandTotal)}</strong></div>
         {order.isAddition && <p className="mt-2 text-xs font-bold text-orange-700">{uiText("Additional order")}</p>}
         {order.items.map((item) => <div className="mt-3 border-t pt-2 text-sm" key={item.id}><strong>{item.quantity} × {item.name}</strong><OptionSummary item={item} />{item.notes && <p className="mt-1 text-xs text-amber-800">{uiText("Note:")}{' '}{item.notes}</p>}</div>)}

@@ -5,7 +5,7 @@ import { sendMemberEmailCode, verifyMemberEmailCode, normalizeMemberEmail } from
 import { createCustomerMember, loginCustomerMember } from '../../services/customerApi'
 import { isValidMemberPhone } from '../../utils/member'
 
-export default function MemberEmailAuth({ purpose, getTableSession, onSuccess, onBack }) {
+export default function MemberEmailAuth({ purpose, getTableSession, onSuccess, onBack, testMode = false }) {
   const { t } = useCustomerLanguage()
   const [form, setForm] = useState({ name: '', phone: '', email: '', emailNotificationsEnabled: false })
   const [requestedEmail, setRequestedEmail] = useState('')
@@ -64,6 +64,7 @@ export default function MemberEmailAuth({ purpose, getTableSession, onSuccess, o
   }
   const inputClass = 'mt-2 w-full rounded-xl border border-slate-200 px-3 py-3 font-normal outline-none focus:border-orange-400 disabled:bg-slate-50'
   return <div className="space-y-4">
+    {testMode && <p role="status" className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm text-amber-900">{t('Email testing only. Use the test inbox configured by the restaurant; customer registration is not open yet.')}</p>}
     {error && <p role="alert" className="rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-700">{t(error)}</p>}
     {!requestedEmail ? <form className="space-y-5" onSubmit={sendCode}>
       {registration && <>

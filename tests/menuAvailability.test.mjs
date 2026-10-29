@@ -15,7 +15,7 @@ async function harness() {
     'availability-fixture': 'export const fixture={language:"en",requests:[],update:async(item,updates)=>({...item,...updates}),setup:{tables:[],items:[{id:"rice",name:"Chicken Rice",price:9,isAvailable:true}],settings:{serviceChargeRate:0,sstRate:0},settingsRevision:1}}',
     useCustomerLanguage: `import {fixture} from 'availability-fixture';export default ()=>({t:(text,options)=>fixture.t(text,options)})`,
     useAdminAuth: 'export default ()=>({authUser:{id:"test-cashier"}})',
-    adminApiService: `import {fixture} from 'availability-fixture';export function updateSupabaseMenuFlags(item,updates){fixture.requests.push({item,updates});return fixture.update(item,updates)}export async function getSupabaseCashierOrderSetup(){return fixture.setup}export async function createSupabaseCashierOrder(){throw new Error('No real orders allowed')}`,
+    adminApiService: `import {fixture} from 'availability-fixture';export async function getTableVisits(){return fixture.setup.tables}export function updateSupabaseMenuFlags(item,updates){fixture.requests.push({item,updates});return fixture.update(item,updates)}export async function getSupabaseCashierOrderSetup(){return fixture.setup}export async function createSupabaseCashierOrder(){throw new Error('No real orders allowed')}`,
     'react-router-dom': 'export const useSearchParams=()=>[new URLSearchParams()];export const Link=()=>null',
   })
   return { ...module, runtime }

@@ -1,4 +1,6 @@
 import { Link } from 'react-router-dom'
+import OrderIdentifiers from './OrderIdentifiers'
+import { hasSavedTableVisitTools } from '../../utils/deploymentFeatures'
 import { useEffect, useRef } from 'react'
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import useOrderDetails from '../../hooks/useOrderDetails'
@@ -39,6 +41,7 @@ export function OrderDetailsPanelContent({ order, returnTo, compact = false }) {
       </div>
     </div>
     <div className="space-y-5 px-4 py-4">
+      {hasSavedTableVisitTools&&<OrderIdentifiers key={order.id} orderId={order.id}/>}
       {!compact && metadata}
       <section><h4 className={compact ? 'sr-only' : 'text-xs font-bold uppercase tracking-wide text-slate-500'}>{t('Items')}</h4>
         <div className="mt-1 divide-y divide-dashed divide-slate-200">{(order.items ?? []).map((item) => <div key={item.id} className="flex items-start justify-between gap-3 py-3">

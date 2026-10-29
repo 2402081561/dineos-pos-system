@@ -117,6 +117,11 @@
 }
 
 @media print {
+  body:has(.kitchen-print-overlay) > :not(.kitchen-print-overlay) { display: none !important; }
+  .kitchen-print-overlay { position: static !important; overflow: visible !important; padding: 0 !important; background: white !important; }
+  .kitchen-print-overlay > div { margin: 0 !important; padding: 0 !important; }
+  .kitchen-print-controls { display: none !important; }
+  .kitchen-ticket-paper { width: 72mm !important; margin: 0 !important; }
   body {
     background: #fff !important;
   }

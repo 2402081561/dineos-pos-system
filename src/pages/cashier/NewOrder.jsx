@@ -1,4 +1,6 @@
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
+import CounterIdentifierFields from '../../components/cashier/CounterIdentifierFields'
+import { hasSavedTableVisitTools } from '../../utils/deploymentFeatures'
 import { cartLineId, moveCartQuantity } from '../../utils/cartOrderType'
 import OrderTypeSelector from '../../components/common/OrderTypeSelector'
 import OrderTypeBadge from '../../components/common/OrderTypeBadge'
@@ -239,6 +241,7 @@ function NewOrder() {
           {setup.tables.length === 0 && <p className="mt-2 text-xs text-slate-500">{uiText("No enabled tables are available.")}</p>}
           <p className="mt-3 text-xs text-slate-500">{uiText("Choose Dine in or Take away separately for each dish below.")}</p>
           <label className="mt-3 block text-xs font-semibold text-slate-600" htmlFor="counter-name">{uiText("Customer name")}<span className="font-normal text-slate-400">{uiText("(optional)")}</span></label><input id="counter-name" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" disabled={isEditingDisabled} maxLength={80} onChange={(event) => { setCustomerNickname(event.target.value) }} placeholder={uiText("Guest")} value={customerNickname} />
+          {hasSavedTableVisitTools&&<CounterIdentifierFields draft={draft} disabled={isEditingDisabled} onChange={(key,value)=>changeDraft((current)=>({...current,[key]:value}))}/>}
         </div>
         <div aria-label={uiText("Selected dishes")} className="min-h-0 p-4 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
           <div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-bold">{uiText("Order items")}</h3><span className="rounded-full bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700">{selectedTable ? `Table ${selectedTable.tableNumber}` : uiText("No table")}</span></div>

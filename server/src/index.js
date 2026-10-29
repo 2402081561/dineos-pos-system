@@ -1,4 +1,8 @@
 import 'dotenv/config'
+import { identifierInput, registerOrderIdentifierRoutes } from './orderIdentifiers.js'
+import { registerTableVisitMoveRoutes } from './tableVisitMoves.js'
+import { createDatabasePool, apiErrorHandler, logDatabaseError } from './databaseConnection.js'
+import { validateKitchenName } from './kitchenName.js'
 import { createHash } from 'node:crypto'
 import { paymentPlan, selectPaymentOrders } from './paymentSelection.js'
 import { registerHandoffRoutes } from './handoffs.js'
@@ -23,6 +27,9 @@ import { registerKitchenEstimateRoutes, loadKitchenEstimates } from './kitchenEs
 import { createSupabaseTokenVerifier, createAuthenticatedUserMiddleware } from './authentication.js'
 import { startApiServer } from './startServer.js'
 import { createVerifiedMemberMiddleware, registerMemberEmailRoutes } from './memberEmailAuth.js'
+import { memberEmailConfig } from './memberEmailConfig.js'
+import { createWelcomeSender } from './memberWelcomeEmail.js'
+import { createMemberWelcomeQueue } from './memberWelcomeQueue.js'
 
 const { Pool } = pg
 const port = Number(process.env.PORT) || 4000
@@ -30,7 +37,7 @@ const allowedOrigins = String(process.env.CLIENT_ORIGINS ?? 'http://localhost:51
 const isDevelopment = process.env.NODE_ENV !== 'production'
 const supabaseUrl = String(process.env.SUPABASE_URL ?? '').replace(/\/$/, '')
 const app = express()
-const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+const pool = createDatabasePool(Pool, process.env.DATABASE_URL)
 
 app.disable('x-powered-by')
 app.use(cors({
@@ -54,13 +61,17 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const verifySupabaseAccessToken = createSupabaseTokenVerifier({ supabaseUrl })
 const requireAuthenticatedUser = createAuthenticatedUserMiddleware({ verifyToken: verifySupabaseAccessToken, pool })
 const memberPublishableKey = String(process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY ?? '').trim()
-const memberEmailOtpEnabled = process.env.MEMBER_EMAIL_OTP_ENABLED === 'true' && Boolean(supabaseUrl && memberPublishableKey)
-const requireVerifiedMember = createVerifiedMemberMiddleware({ supabaseUrl, publishableKey: memberPublishableKey, enabled: memberEmailOtpEnabled })
+const emailConfig = memberEmailConfig(process.env)
+const memberEmailOtpEnabled = emailConfig.authEnabled
+const welcomeQueue = createMemberWelcomeQueue({ pool, config: emailConfig, send: createWelcomeSender({ config: emailConfig }) })
+const requireVerifiedMember = createVerifiedMemberMiddleware({ supabaseUrl, publishableKey: memberPublishableKey, enabled: memberEmailOtpEnabled, allowedEmail: emailConfig.mode === 'test' ? emailConfig.testRecipient : '' })
 registerPaymentRecoveryRoute(app, { pool, requireAuthenticatedUser, requireRole })
 registerCustomerRequestHistory(app, { pool, requireCustomerSession })
 registerRefundRoutes(app, { pool, requireAuthenticatedUser, requireRole })
+registerOrderIdentifierRoutes(app, { pool, requireAuthenticatedUser, requireRole })
+registerTableVisitMoveRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 app.get('/api/v1/public/member-auth-config', (_request, response) => {
-  response.set('Cache-Control', 'no-store').json({ emailOtpEnabled: memberEmailOtpEnabled })
+  response.set('Cache-Control', 'no-store').json({ emailOtpEnabled: memberEmailOtpEnabled, testMode: memberEmailOtpEnabled && emailConfig.mode === 'test' })
 })
 
 async function requireCustomerSession(request, response, next) {
@@ -71,7 +82,8 @@ async function requireCustomerSession(request, response, next) {
       SELECT customer_sessions.id, customer_sessions.access_token AS "sessionId",
         customer_sessions.nickname AS "customerNickname", customer_sessions.table_session_id AS "tableSessionId",
         customer_sessions.member_id AS "memberId",
-        table_sessions.shared_customer_session_id = customer_sessions.id AS "isSharedTable",
+        COALESCE(to_jsonb(customer_sessions)->'previous_table_session_ids','[]'::jsonb) AS "previousTableSessionIds",
+        (table_sessions.shared_customer_session_id = customer_sessions.id OR COALESCE((to_jsonb(customer_sessions)->>'merged_shared_guest')::boolean,false)) AS "isSharedTable",
         restaurant_tables.table_number AS "tableNumber"
       FROM customer_sessions
       JOIN table_sessions ON table_sessions.id = customer_sessions.table_session_id
@@ -132,6 +144,7 @@ function menuItemInput(input) {
   if (price === null) throw new Error('Price must be a valid non-negative amount.')
   return {
     name,
+    kitchenName: validateKitchenName(input?.kitchenName),
     categoryId,
     description: String(input?.description ?? '').trim().slice(0, 2000),
     price,
@@ -265,7 +278,7 @@ app.get('/health', async (_request, response) => {
     await pool.query('SELECT 1')
     response.status(200).json({ database: 'connected', status: 'ok' })
   } catch (error) {
-    console.error('[API] PostgreSQL health check failed:', error)
+    logDatabaseError(console, 'PostgreSQL health check failed', error)
     response.status(503).json({ database: 'unavailable', status: 'error' })
   }
 })
@@ -355,7 +368,7 @@ app.get('/api/v1/public/member', requireCustomerSession, async (request, respons
   } catch (error) { return next(error) }
 })
 
-registerMemberEmailRoutes(app, { pool, requireCustomerSession, requireVerifiedMember, memberInput, memberResponse, personalMemberSession })
+registerMemberEmailRoutes(app, { pool, requireCustomerSession, requireVerifiedMember, memberInput, memberResponse, personalMemberSession, welcomeQueue })
 
 app.get('/api/v1/public/rewards', requireCustomerSession, async (_request, response, next) => {
   try {
@@ -417,8 +430,9 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
       await client.query('COMMIT')
       return response.status(200).json({ order: existing.rows[0], duplicate: true })
     }
-    const session = await client.query("SELECT customer_sessions.id FROM customer_sessions JOIN table_sessions ON table_sessions.id = customer_sessions.table_session_id WHERE customer_sessions.id = $1 AND customer_sessions.left_at IS NULL AND table_sessions.status = 'active' FOR UPDATE OF customer_sessions, table_sessions", [request.customerSession.id])
+    const session = await client.query("SELECT customer_sessions.id,customer_sessions.table_session_id FROM customer_sessions JOIN table_sessions ON table_sessions.id = customer_sessions.table_session_id WHERE customer_sessions.id = $1 AND customer_sessions.left_at IS NULL AND table_sessions.status = 'active' FOR UPDATE OF customer_sessions, table_sessions", [request.customerSession.id])
     if (!session.rows[0]) throw new Error('Your table session is no longer active.')
+    if (session.rows[0].table_session_id && session.rows[0].table_session_id !== request.customerSession.tableSessionId) throw new PosValidationError('Your table visit changed. Refresh before submitting the same order.',409)
     const created = await insertPreparedOrder(client, { tableSessionId: request.customerSession.tableSessionId, customerSessionId: request.customerSession.id, memberId: request.customerSession.isSharedTable ? null : request.customerSession.memberId, cartItems, requestId, publicOrder: true, settingsRevision: request.body?.settingsRevision, orderType: request.body?.orderType })
     await client.query('COMMIT')
     return response.status(201).json({ order: created.rows[0], duplicate: false })
@@ -526,8 +540,9 @@ app.get('/api/v1/kitchen/orders', requireAuthenticatedUser, requireRole('admin',
   try {
     const { rows } = await pool.query(`
       SELECT orders.id, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.version, orders.is_addition AS "isAddition", orders.revision_note AS "revisionNote", orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
+        COALESCE(to_jsonb(orders)->>'ticket_seat','') AS "ticketSeat", COALESCE(to_jsonb(orders)->>'ticket_reference','') AS "ticketReference",
         restaurant_tables.table_number AS "tableNumber", customer_sessions.nickname AS "customerNickname",
-        COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes, 'imageUrl', menu_items.image_url) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
+        COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'kitchenName', to_jsonb(menu_items)->>'kitchen_name', 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes, 'imageUrl', menu_items.image_url) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
       FROM orders
       JOIN table_sessions ON table_sessions.id = orders.table_session_id
       JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
@@ -892,13 +907,14 @@ app.post('/api/v1/cashier/orders', requireAuthenticatedUser, requireRole('admin'
   }
   if (nickname.length > 80) return response.status(400).json({ error: 'Customer name must be 80 characters or fewer.' })
   let cartItems
-  try { validateOrderType(request.body?.orderType); cartItems = orderCartItems(request.body?.items) } catch (error) { return response.status(400).json({ error: error.message }) }
+  let identifiers
+  try { identifiers=identifierInput(request.body); validateOrderType(request.body?.orderType); cartItems = orderCartItems(request.body?.items) } catch (error) { return response.status(400).json({ error: error.message }) }
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
     const existingOrder = await client.query(`SELECT orders.id, orders.order_type AS "orderType", orders.table_order_number AS "tableOrderNumber",
       orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal",
-      orders.created_at AS "createdAt", table_sessions.table_id AS "tableId"
+      orders.created_at AS "createdAt", COALESCE((to_jsonb(orders)->>'counter_request_table_id')::uuid,table_sessions.table_id) AS "tableId"
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
       WHERE orders.client_request_id = $1`, [requestId])
     if (existingOrder.rows[0]) {
@@ -922,6 +938,7 @@ app.post('/api/v1/cashier/orders', requireAuthenticatedUser, requireRole('admin'
     // a guest participant or exposing an ordering token to another customer.
     const customerSession = await client.query('INSERT INTO customer_sessions (table_session_id, nickname, left_at, created_by_cashier) VALUES ($1, $2, now(), true) RETURNING id', [tableSessionId, nickname])
     const created = await insertPreparedOrder(client, { tableSessionId, customerSessionId: customerSession.rows[0].id, cartItems, requestId, settingsRevision: request.body?.settingsRevision, orderType: request.body?.orderType })
+    if (identifiers.ticketSeat || identifiers.ticketReference) await client.query('UPDATE orders SET ticket_seat=$1,ticket_reference=$2,counter_request_table_id=$3 WHERE id=$4',[identifiers.ticketSeat,identifiers.ticketReference,tableId,created.rows[0].id])
     await client.query('COMMIT')
     void logAuditEvent({ action: 'CREATE_COUNTER_ORDER', actorId: request.user.id, targetType: 'order', targetId: created.rows[0].id, details: { tableId, orderType: created.rows[0].orderType, itemCount: cartItems.length, isAddition: created.rows[0].isAddition } })
     return response.status(201).json({ order: created.rows[0], duplicate: false })
@@ -931,7 +948,7 @@ app.post('/api/v1/cashier/orders', requireAuthenticatedUser, requireRole('admin'
     if (error.code === '23505') {
       const { rows } = await pool.query(`SELECT orders.id, orders.order_type AS "orderType", orders.table_order_number AS "tableOrderNumber", orders.status,
         orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
-        table_sessions.table_id AS "tableId" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
+        COALESCE((to_jsonb(orders)->>'counter_request_table_id')::uuid,table_sessions.table_id) AS "tableId" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
         WHERE orders.client_request_id = $1`, [requestId])
       if (rows[0]?.tableId === tableId) {
         return response.status(200).json({ order: rows[0], duplicate: true })
@@ -1293,7 +1310,7 @@ app.delete('/api/v1/admin/categories/:categoryId', requireAuthenticatedUser, req
 app.get('/api/v1/admin/menu-items', requireAuthenticatedUser, requireRole('admin', 'cashier', 'kitchen'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT menu_items.id, menu_items.name, menu_items.description, menu_items.price, menu_items.ingredients,
+      SELECT menu_items.id, menu_items.name, to_jsonb(menu_items)->>'kitchen_name' AS "kitchenName", menu_items.description, menu_items.price, menu_items.ingredients,
         menu_items.allergy_information AS "allergyInformation",
         menu_items.image_url AS "imageUrl", menu_items.option_groups AS "optionGroups", menu_items.is_available AS "isAvailable",
         menu_items.is_popular AS "isPopular", menu_items.category_id AS "categoryId",
@@ -1313,7 +1330,7 @@ app.post('/api/v1/admin/menu-items', requireAuthenticatedUser, requireRole('admi
       const category = await pool.query('SELECT 1 FROM categories WHERE id = $1', [input.categoryId])
       if (!category.rowCount) return response.status(400).json({ error: 'Choose an existing category.' })
     }
-    const { rows } = await pool.query('INSERT INTO menu_items (category_id, name, description, price, image_url, ingredients, allergy_information, is_available, is_popular, option_groups) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb) RETURNING id, name, description, price, image_url AS "imageUrl", ingredients, allergy_information AS "allergyInformation", is_available AS "isAvailable", is_popular AS "isPopular", category_id AS "categoryId", option_groups AS "optionGroups"', [input.categoryId, input.name, input.description, input.price, input.imageUrl, JSON.stringify(input.ingredients), JSON.stringify(input.allergyInformation), input.isAvailable, input.isPopular, JSON.stringify(input.optionGroups)])
+    const { rows } = await pool.query('INSERT INTO menu_items (category_id, name, description, price, image_url, ingredients, allergy_information, is_available, is_popular, option_groups, kitchen_name) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, COALESCE($11, \'\')) RETURNING id, name, kitchen_name AS "kitchenName", description, price, image_url AS "imageUrl", ingredients, allergy_information AS "allergyInformation", is_available AS "isAvailable", is_popular AS "isPopular", category_id AS "categoryId", option_groups AS "optionGroups"', [input.categoryId, input.name, input.description, input.price, input.imageUrl, JSON.stringify(input.ingredients), JSON.stringify(input.allergyInformation), input.isAvailable, input.isPopular, JSON.stringify(input.optionGroups), input.kitchenName])
     return response.status(201).json({ item: rows[0] })
   } catch (error) { return next(error) }
 })
@@ -1326,7 +1343,7 @@ app.patch('/api/v1/admin/menu-items/:itemId', requireAuthenticatedUser, requireR
       const category = await pool.query('SELECT 1 FROM categories WHERE id = $1', [input.categoryId])
       if (!category.rowCount) return response.status(400).json({ error: 'Choose an existing category.' })
     }
-    const { rows } = await pool.query('UPDATE menu_items SET category_id = $1, name = $2, description = $3, price = $4, image_url = $5, ingredients = $6::jsonb, allergy_information = $7::jsonb, is_available = $8, is_popular = $9, option_groups = $11::jsonb, updated_at = now() WHERE id = $10 RETURNING id, name, description, price, image_url AS "imageUrl", ingredients, allergy_information AS "allergyInformation", is_available AS "isAvailable", is_popular AS "isPopular", category_id AS "categoryId", option_groups AS "optionGroups"', [input.categoryId, input.name, input.description, input.price, input.imageUrl, JSON.stringify(input.ingredients), JSON.stringify(input.allergyInformation), input.isAvailable, input.isPopular, String(request.params.itemId ?? ''), JSON.stringify(input.optionGroups)])
+    const { rows } = await pool.query('UPDATE menu_items SET category_id = $1, name = $2, description = $3, price = $4, image_url = $5, ingredients = $6::jsonb, allergy_information = $7::jsonb, is_available = $8, is_popular = $9, option_groups = $11::jsonb, kitchen_name = COALESCE($12, kitchen_name), updated_at = now() WHERE id = $10 RETURNING id, name, kitchen_name AS "kitchenName", description, price, image_url AS "imageUrl", ingredients, allergy_information AS "allergyInformation", is_available AS "isAvailable", is_popular AS "isPopular", category_id AS "categoryId", option_groups AS "optionGroups"', [input.categoryId, input.name, input.description, input.price, input.imageUrl, JSON.stringify(input.ingredients), JSON.stringify(input.allergyInformation), input.isAvailable, input.isPopular, String(request.params.itemId ?? ''), JSON.stringify(input.optionGroups), input.kitchenName])
     if (!rows[0]) return response.status(404).json({ error: 'This menu item no longer exists.' })
     return response.status(200).json({ item: rows[0] })
   } catch (error) { return next(error) }
@@ -1349,15 +1366,15 @@ app.delete('/api/v1/admin/menu-items/:itemId', requireAuthenticatedUser, require
   } catch (error) { return next(error) }
 })
 
-app.use((error, _request, response, _next) => {
-  console.error('[API] Unhandled request error:', error)
-  response.status(500).json({ error: 'The server could not complete this request.' })
-})
+app.use(apiErrorHandler)
 
 app.use((_request, response) => response.status(404).json({ error: 'Route not found.' }))
 
-startApiServer(app, port, { onError() {
+const apiServer = startApiServer(app, port, { onError() {
   process.exitCode = 1
   void pool.end().catch(() => console.error('[API] Failed to close database pool after startup failure.'))
 } })
+let stopWelcomeWorker = () => {}
+apiServer.once('listening', () => { stopWelcomeWorker = welcomeQueue.start() })
+apiServer.once('close', () => stopWelcomeWorker())
   const textList = (value) => Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean).slice(0, 50) : String(value ?? '').split(',').map((item) => item.trim()).filter(Boolean).slice(0, 50)

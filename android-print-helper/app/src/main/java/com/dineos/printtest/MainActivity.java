@@ -50,7 +50,7 @@ public class MainActivity extends Activity {
             return insets;
         });
         scroll.requestApplyInsets();
-        label(body, "DineOS Print Helper · 0.2.0", 26);
+        label(body, "DineOS Print Helper · 0.3.0", 26);
         label(body, t("打印助手 · 不收款 · 无联网权限", "Print helper · No payments or internet permission"), 16);
         button(body, chinese ? "English" : "中文", v -> {
             getPreferences(0).edit().putBoolean("zh", !chinese).apply(); recreate();
@@ -66,7 +66,7 @@ public class MainActivity extends Activity {
         widths.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
             new String[]{"80mm / 576 dots", "384 dots (if image is cut off)"})); body.addView(widths);
         widths.setSelection(getPreferences(0).getInt("width", 0) == 1 ? 1 : 0);
-        button(body, t("确认并打印当前收据", "Confirm and print receipt"), v -> confirmReceipt());
+        button(body, t("确认并打印当前单据", "Confirm and print document"), v -> confirmReceipt());
         button(body, t("返回 DineOS", "Return to DineOS"), v -> {
             if (busy) { log(t("请等到数据发送完成再返回；如需中止，请先按停止。", "Wait until data is sent before returning; press Stop to cancel.")); return; }
             finish();
@@ -91,9 +91,9 @@ public class MainActivity extends Activity {
             Uri uri = intent.getData();
             if (uri.toString().length() > 43000 || !Intent.ACTION_VIEW.equals(intent.getAction()) || !"dineosprint".equals(uri.getScheme()) || !"receipt".equals(uri.getHost()) || uri.getPort() != -1 || uri.getUserInfo() != null || (uri.getPath() != null && !uri.getPath().isEmpty()) || uri.getFragment() != null || uri.getQueryParameters("payload").size() != 1 || uri.getQueryParameterNames().size() != 1) throw new IllegalArgumentException();
             pendingReceipt = ReceiptDocument.decode(uri.getQueryParameter("payload"));
-            receiptSummary.setText(t("待打印收据：", "Receipt to print: ") + pendingReceipt.receiptNumber);
+            receiptSummary.setText((pendingReceipt.kitchen ? t("厨房单（非付款收据）：", "Kitchen ticket (not a payment receipt): ") : t("待打印收据：", "Receipt to print: ")) + pendingReceipt.receiptNumber);
             receiptPreview.setText(pendingReceipt.preview());
-            log(t("请核对下方预览及 DineOS 的付款记录，再连接打印机并确认打印。本助手不能验证付款或网页来源。", "Check the preview and payment in DineOS, then connect and confirm printing. This helper cannot verify payment or website origin."));
+            log(pendingReceipt.kitchen ? t("厨房单不是付款证明。核对订单和打包标记后再确认打印。", "Kitchen tickets are not proof of payment. Check order and takeaway labels before printing.") : t("请核对下方预览及 DineOS 的付款记录，再连接打印机并确认打印。本助手不能验证付款或网页来源。", "Check the preview and payment in DineOS, then connect and confirm printing. This helper cannot verify payment or website origin."));
         } catch (org.json.JSONException | IllegalArgumentException error) {
             pendingReceipt = null;
             log(t("收据链接无效或过长。请从 DineOS 重新打开，或改用浏览器打印。", "Invalid/oversized receipt link. Reopen from DineOS or use browser printing."));
@@ -106,7 +106,7 @@ public class MainActivity extends Activity {
         String duplicate = document.receiptNumber.equals(getPreferences(0).getString("lastSent", ""))
             ? t("\n注意：这张收据之前尝试过打印，重印前请确认纸张。", "\nWarning: printing this receipt was attempted before. Check paper before reprinting.") : "";
         confirmation = new AlertDialog.Builder(this).setTitle(t("确认打印？", "Confirm printing?"))
-            .setMessage(document.receiptNumber + "\n" + t("请确认已收款及预览金额。打印不改变付款状态。", "Confirm payment and preview totals. Printing does not change payment status.") + duplicate)
+            .setMessage(document.receiptNumber + "\n" + (document.kitchen ? t("厨房单：核对餐点、桌号及打包标记；这不是付款收据。", "Kitchen ticket: check items, table and takeaway labels. This is not a payment receipt.") : t("请确认已收款及预览金额。打印不改变付款状态。", "Confirm payment and preview totals. Printing does not change payment status.")) + duplicate)
             .setNegativeButton(t("取消", "Cancel"), null)
             .setPositiveButton(t("打印", "Print"), (dialog, which) -> { if (pendingReceipt == document) printJob(false, document); }).create();
         confirmation.show();

@@ -15,12 +15,13 @@ async function harness() {
     'counter-fixture': `export const fixture={actorId:'cashier-A',requests:[],committed:new Map(),loseFirst:false,errorStatus:0,malformed:false,setup:{tables:[{id:'${tableId}',tableNumber:1,tableSessionId:'${visitId}'}],items:[{id:'${itemId}',name:'Test rice',price:9,isAvailable:true}],settings:{serviceChargeRate:0,sstRate:0},settingsRevision:1}}`,
     useCustomerLanguage: 'export default ()=>({t:(text,options={})=>text.replace(/{{(\\w+)}}/g,(match,key)=>options[key]??match)})',
     useAdminAuth: `import {fixture} from 'counter-fixture';export default ()=>({authUser:fixture.actorId?{id:fixture.actorId}:null})`,
+    deploymentFeatures: 'export const hasSavedTableVisitTools=true',
     'react-router-dom': `export const useSearchParams=()=>[new URLSearchParams('tableId=${tableId}')];export const Link=()=>null`,
     adminApiService: `import {fixture} from 'counter-fixture';export async function getSupabaseCashierOrderSetup(){return fixture.setup}export async function createSupabaseCashierOrder(body){
       fixture.requests.push(body);if(fixture.errorStatus){const error=new Error('Test-only explicit rejection');error.status=fixture.errorStatus;throw error}
       if(fixture.malformed)return {order:{}}
       if(!fixture.committed.has(body.requestId)){fixture.committed.set(body.requestId,{order:{id:'test-'+fixture.committed.size,grandTotal:9,tableOrderNumber:1}});if(fixture.loseFirst){fixture.loseFirst=false;throw new TypeError('Test-only response lost after commit')}}return fixture.committed.get(body.requestId)
-    }export function updateSupabaseMenuFlags(){throw new Error('No real writes')}
+    }export async function getTableVisits(){return fixture.setup.tables}export function updateSupabaseMenuFlags(){throw new Error('No real writes')}
     export function subscribeToSupabaseAdminMenu(data,error){fixture.menuData=data;fixture.menuError=error;return()=>{}}`,
   })
   const h = { ...module, runtime }
@@ -37,6 +38,23 @@ function browserStorage(storage = memoryStorage()) {
   return { storage, restore() { if (previous === undefined) delete globalThis.window; else globalThis.window = previous } }
 }
 const sampleCart = { rice: { menuItemId: itemId, name: 'Test rice', notes: 'No onion', selections: [], quantity: 1, orderType: 'take_away' } }
+
+test('counter identifiers persist through refresh and remain frozen with the original uncertain request',async()=>{
+  const browser=browserStorage(),h=await harness();let next
+  try{
+    await h.load();h.action('Add one Test rice').props.onClick()
+    const fields=()=>findElement(h.page(),node=>node.type?.name==='CounterIdentifierFields')
+    fields().props.onChange('ticketSeat','8899');fields().props.onChange('ticketReference','QAA1234')
+    h.runtime.cleanup();next=await harness();await next.load()
+    assert.equal(findElement(next.page(),node=>node.type?.name==='CounterIdentifierFields').props.draft.ticketReference,'QAA1234')
+    next.fixture.errorStatus=503;await next.submit()
+    const sent=next.fixture.requests[0]
+    assert.equal(sent.ticketSeat,'8899');assert.equal(sent.ticketReference,'QAA1234')
+    findElement(next.page(),node=>node.type?.name==='CounterIdentifierFields').props.onChange('ticketReference','must not replace')
+    next.fixture.errorStatus=0;await next.submit()
+    assert.deepEqual(next.fixture.requests[1],sent)
+  }finally{h.runtime.cleanup();next?.runtime.cleanup();browser.restore()}
+})
 
 test('counter storage is per actor/tab, validates drafts, and never silently discards damaged pending data', () => {
   const storage = memoryStorage(), first = createCounterDraftStorage({ getStorage: () => storage })
@@ -109,6 +127,22 @@ test('an explicit first rejection unlocks edits; a later rejection never erases 
       assert.equal(Boolean(persisted.request), uncertain)
     } finally { h.runtime.cleanup(); browser.restore() }
   }
+})
+
+test('database 503 keeps counter draft frozen and explicit retry uses the same original request', async () => {
+  const browser = browserStorage(), h = await harness()
+  try {
+    await h.load(); h.action('Add one Test rice').props.onClick()
+    h.fixture.errorStatus = 503; await h.submit()
+    const original = h.fixture.requests[0]
+    assert.equal(h.action('Add one Test rice').props.disabled, true)
+    await flush(); h.page(); assert.equal(h.fixture.requests.length, 1)
+    const saved = createCounterDraftStorage({ getStorage: () => browser.storage }).read('cashier-A')
+    assert.equal(saved.request.requestId, original.requestId)
+    h.fixture.errorStatus = 0; await h.submit()
+    assert.deepEqual(h.fixture.requests[1], original)
+    assert.equal(h.fixture.committed.size, 1)
+  } finally { h.runtime.cleanup(); browser.restore() }
 })
 
 test('new table visit blocks stale restored draft until the cashier deliberately selects the table again', async () => {

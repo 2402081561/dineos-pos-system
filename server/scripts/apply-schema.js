@@ -23,6 +23,9 @@ migrations.push('027_table_appearance.sql')
 migrations.push('028_free_floor_plan.sql')
 migrations.push('029_member_email_otp.sql')
 migrations.push('030_refund_records.sql')
+migrations.push('031_kitchen_short_names.sql')
+migrations.push('032_order_identifiers_and_table_moves.sql')
+migrations.push('033_member_welcome_emails.sql')
 const { Pool } = pg
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 

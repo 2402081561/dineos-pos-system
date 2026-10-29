@@ -18,6 +18,23 @@ function items() {
 function draft(sessionValue = session) { return { ...emptyCustomerDraft(sessionValue), items: items() } }
 const requestId = 'd01be883-6c4e-468a-9d22-1006dfe622b4'
 
+test('verified table merge rebases the same guest cart without losing an uncertain order request',()=>{
+  const native=browserStorage(),cache=createCustomerVisitStorage({getStorage:()=>native})
+  const old=draft()
+  old.orderRequest={id:requestId,signature:customerOrderFingerprint(old.items,session),settingsRevision:2}
+  cache.saveSession(session);cache.saveDraft(session,old)
+  const merged={...session,tableNumber:'3',tableSessionId:next.tableSessionId,previousTableSessionIds:[session.tableSessionId]}
+  cache.saveSession(merged)
+  const recovered=cache.readDraft(merged)
+  assert.deepEqual(recovered.items,old.items)
+  assert.equal(recovered.orderRequest.id,requestId)
+  assert.equal(recovered.orderRequest.signature,customerOrderFingerprint(recovered.items,merged))
+  const reloaded=createCustomerVisitStorage({getStorage:()=>native})
+  assert.equal(reloaded.readDraft(reloaded.readSession()).orderRequest.id,requestId)
+  cache.saveDraft(session,old) // Obsolete source page cannot overwrite the moved cart.
+  assert.equal(cache.readDraft(merged).tableSessionId,merged.tableSessionId)
+})
+
 test('a fresh page restores the same shared visit, quantities, notes, options and dining type without joining again', () => {
   const native = browserStorage()
   const firstPage = createCustomerVisitStorage({ getStorage: () => native })

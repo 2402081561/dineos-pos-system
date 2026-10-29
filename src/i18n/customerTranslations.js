@@ -1,5 +1,9 @@
 // UI copy only: menu names, categories, notes and member names stay as entered.
 export const customerChinese = {
+  'Email testing only. Use the test inbox configured by the restaurant; customer registration is not open yet.': '目前仅测试邮件功能。请使用店铺设定的测试邮箱，暂未开放顾客注册。',
+  'Membership testing is limited to the configured test email. You can still order as Guest.': '会员测试仅限店铺设定的测试邮箱。您仍可使用访客身份点餐。',
+  'Your welcome email is being processed. You can start ordering now.': '欢迎邮件正在处理中，您现在可以开始点餐。',
+  'Your membership is active. The welcome email is temporarily unavailable.': '您的会员已注册成功，欢迎邮件暂时无法发送。',
   'Loading page…': '正在加载页面…',
   'Administrator': '管理员',
   'Live data updated': '实时资料已更新',

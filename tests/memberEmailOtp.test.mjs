@@ -51,7 +51,7 @@ async function uiHarness() {
     import MemberEmailAuth from './src/components/member/MemberEmailAuth.jsx';import JoinSession from './src/pages/customer/JoinSession.jsx';import {fixture} from 'member-fixture';export {MemberEmailAuth,JoinSession,fixture}
   `, runtime, {
     'member-fixture': `export const fixture={memberEnabled:true,sends:[],verifies:0,requests:[],failedCode:false,failedApi:false,joins:0,result:{member:{id:'member-1',memberId:'MEM-00001',email:'test@example.com',pointsBalance:29},session:{sessionId:'test-visit',tableNumber:'1'}}}`,
-    useMemberEmailAvailability: `import {fixture} from 'member-fixture';export default ()=>({isLoading:false,enabled:fixture.memberEnabled})`,
+    useMemberEmailAvailability: `import {fixture} from 'member-fixture';export default ()=>({isLoading:false,enabled:fixture.memberEnabled,testMode:fixture.testMode===true})`,
     useCustomerLanguage: 'export default ()=>({t:(text,options={})=>text.replace(/{{(\\w+)}}/g,(match,key)=>options[key]??match)})',
     useShopSettings: 'export default ()=>({name:"Test restaurant"})',
     useCustomerSession: 'export default ()=>({session:null,sessionError:"",clearSession:async()=>{},startSession(){}})',
@@ -143,6 +143,29 @@ test('paused membership disables login and registration while Guest entry still 
     await guest.props.onClick()
     assert.equal(h.fixture.joins, 1); assert.equal(h.fixture.sends.length, 0)
   } finally { h.runtime.cleanup() }
+})
+
+test('test registration is clearly labelled and welcome delivery never blocks ordering after membership success', async () => {
+  const h = await uiHarness()
+  try {
+    h.fixture.testMode = true
+    findElement(h.runtime.render(h.JoinSession), node => node.props?.children === 'Create Membership').props.onClick()
+    const panel = findElement(h.runtime.render(h.JoinSession), node => node.type === h.MemberEmailAuth)
+    assert.equal(panel.props.testMode, true)
+    panel.props.onSuccess({ ...h.fixture.result, welcomeEmail: { status: 'queued' } })
+    let success = h.runtime.render(h.JoinSession)
+    assert.ok(findElement(success, node => node.props?.children === 'Your welcome email is being processed. You can start ordering now.'))
+    assert.ok(findElement(success, node => node.props?.children === 'Start Ordering'))
+    panel.props.onSuccess({ ...h.fixture.result, welcomeEmail: { status: 'unavailable' } })
+    success = h.runtime.render(h.JoinSession)
+    assert.ok(findElement(success, node => node.props?.children === 'Your membership is active. The welcome email is temporarily unavailable.'))
+    assert.ok(findElement(success, node => node.props?.children === 'Start Ordering'))
+  } finally { h.runtime.cleanup() }
+  const second = await uiHarness()
+  try {
+    const tree = second.runtime.render(second.MemberEmailAuth, { purpose: 'register', testMode: true })
+    assert.ok(findElement(tree, node => node.props?.children === 'Email testing only. Use the test inbox configured by the restaurant; customer registration is not open yet.'))
+  } finally { second.runtime.cleanup() }
 })
 
 test('membership availability fails closed on network errors, recovers, and only accepts a boolean flag', async () => {

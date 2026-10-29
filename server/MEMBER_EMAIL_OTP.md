@@ -12,6 +12,12 @@ boolean; the UI disables signup/login, and the API rejects member identity
 exchanges without calling the email provider. Guest ordering remains available.
 Do not restore legacy Member ID + phone login as a bypass.
 
+The 2026-10-27 local implementation adds a single-inbox test mode and a separate
+post-registration welcome email. See `MEMBER_EMAIL_TESTING.md`. In test mode,
+`MEMBER_EMAIL_TEST_RECIPIENT` is required even when the OTP flag is true. Welcome
+delivery has its own flag and requires migration 033. Neither flag, any real
+credentials, nor hosted templates were changed while implementing it.
+
 1. Review and apply migration `029_member_email_otp.sql` using the normal schema
    runner: `npm --prefix server run db:schema` from the repository root. It keeps
    existing members, points, orders and payments. Do not run against a production
@@ -23,9 +29,12 @@ Do not restore legacy Member ID + phone login as a bypass.
    `VITE_SUPABASE_PUBLISHABLE_KEY`, and `VITE_API_URL`. No new frontend secret.
 4. Supabase Dashboard → Authentication → Email provider: enable email auth and
    signup for new members. Keep email confirmation enabled. Set OTP length to 6.
-5. Authentication → Email Templates → Magic Link: use the template below to send
-   a numeric OTP, not a clickable magic link. This project intentionally does not
-   consume magic links or URL sessions.
+5. Authentication → Email Templates → Magic Link: use the template below (or
+   `email-templates/member-code.html`) to send a numeric OTP, not a clickable
+   magic link. Check Confirm Signup for the new-user path as well: any template
+   used by this flow must include `{{ .Token }}`. This project intentionally
+   does not consume magic links or URL sessions. Do not alter staff password
+   recovery templates as part of this change.
 6. Configure custom SMTP for delivery to actual customers. Supabase's default
    mail service is restricted to authorized team recipients and is not a
    production sender. Follow your chosen provider's sender/domain verification.
@@ -39,6 +48,8 @@ Do not restore legacy Member ID + phone login as a bypass.
 9. Only after the checks below pass, explicitly set
    `MEMBER_EMAIL_OTP_ENABLED=true` in the API environment and restart/redeploy the
    API. This flag is an operator confirmation, not an automatic SMTP health check.
+   Public customer signup additionally requires the explicit
+   `MEMBER_EMAIL_MODE=live`; test mode is not a public launch.
 
 Example Magic Link email template:
 

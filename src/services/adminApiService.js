@@ -87,13 +87,18 @@ export async function getSupabasePaidReceipts() { return (await authenticatedApi
 export async function recordSupabaseRefund(receiptNumber, body) { return (await authenticatedApiRequest(`/api/v1/admin/receipts/${encodeURIComponent(receiptNumber)}/refunds`, { method: 'POST', body })).refund }
 export function subscribeToSupabasePendingPayments(onData, onError) { return poll(async () => authenticatedApiRequest('/api/v1/cashier/pending-orders'), onData, onError, 5000) }
 export async function getSupabaseCashierOrderSetup() { return authenticatedApiRequest('/api/v1/cashier/order-setup') }
-export async function createSupabaseCashierOrder({ tableId, expectedTableSessionId, customerNickname, items, requestId, settingsRevision, orderType }) {
+export async function createSupabaseCashierOrder({ tableId, expectedTableSessionId, customerNickname, items, requestId, settingsRevision, orderType, ticketSeat, ticketReference }) {
   return authenticatedApiRequest('/api/v1/cashier/orders', {
     method: 'POST',
-    body: { tableId, expectedTableSessionId, customerNickname, items, settingsRevision, orderType },
+    body: { tableId, expectedTableSessionId, customerNickname, items, settingsRevision, orderType, ...(ticketSeat ? {ticketSeat} : {}), ...(ticketReference ? {ticketReference} : {}) },
     headers: { 'Idempotency-Key': requestId },
   })
 }
+
+export async function getOrderIdentifiers(id) { return (await authenticatedApiRequest(`/api/v1/operations/orders/${encodeURIComponent(id)}/identifiers`)).order }
+export async function saveOrderIdentifiers(id, body) { return (await authenticatedApiRequest(`/api/v1/operations/orders/${encodeURIComponent(id)}/identifiers`,{method:'PATCH',body})).order }
+export async function getTableVisits() { return (await authenticatedApiRequest('/api/v1/cashier/table-visits')).tables }
+export async function moveTableVisit(body) { return (await authenticatedApiRequest('/api/v1/cashier/table-visits/move',{method:'POST',body})).result }
 export async function saveSupabaseCashierTableLayout(positions, plan = {}) { return authenticatedApiRequest('/api/v1/cashier/table-layout', { method: 'PATCH', body: { positions, ...plan } }) }
 export function subscribeToSupabaseReceipts(onData, onError) { return poll(async () => (await authenticatedApiRequest('/api/v1/cashier/receipts')).receipts.map((receipt) => ({ ...receipt, grandTotal: receipt.amount })), onData, onError, 15000) }
 export function subscribeToSupabaseReceipt(receiptNumber, onData, onError) { return poll(async () => { const receipt = (await authenticatedApiRequest(`/api/v1/cashier/receipts/${encodeURIComponent(receiptNumber)}`)).receipt; return { ...receipt, grandTotal: receipt.amount, cashierId: receipt.cashierName } }, onData, onError, 15000) }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AdminAuthContext } from './AdminAuthContext'
 import { restoreSupabaseUser, signInSupabaseUser, signOutSupabaseAdmin, subscribeToSupabaseSession } from '../services/supabaseAuthService'
+import { recoverStaffSession } from '../utils/staffSessionRecovery'
 
 function AdminAuthProvider({ children }) {
   const [adminUser, setAdminUser] = useState(null)
@@ -11,18 +12,21 @@ function AdminAuthProvider({ children }) {
   useEffect(() => {
     let active = true
     let requestVersion = 0
+    let recovery
     const unsubscribe = subscribeToSupabaseSession((session) => {
       const currentVersion = ++requestVersion
+      recovery?.stop()
       if (!session) {
         if (active) { setAuthUser(null); setAdminUser(null); setAuthError(''); setIsLoading(false) }
         return
       }
-      void restoreSupabaseUser(session)
-        .then((user) => { if (active && currentVersion === requestVersion) { setAuthUser(user); setAdminUser(user?.role === 'admin' ? user : null); setAuthError('') } })
-        .catch(() => { if (active && currentVersion === requestVersion) setAuthError('The server is temporarily unavailable. Your login session has been kept; try again shortly.') })
-        .finally(() => { if (active && currentVersion === requestVersion) setIsLoading(false) })
+      recovery = recoverStaffSession(() => restoreSupabaseUser(session),
+        (user) => { if (active && currentVersion === requestVersion) { setAuthUser(user); setAdminUser(user?.role === 'admin' ? user : null); setAuthError(''); setIsLoading(false) } },
+        () => { if (active && currentVersion === requestVersion) { setAuthError('The server is temporarily unavailable. Your login session has been kept; try again shortly.'); setIsLoading(false) } },
+        () => { if (active && currentVersion === requestVersion) { setAuthUser(null); setAdminUser(null); setAuthError(''); setIsLoading(false) } },
+      )
     })
-    return () => { active = false; unsubscribe() }
+    return () => { active = false; recovery?.stop(); unsubscribe() }
   }, [])
 
   async function signIn(email, password) {

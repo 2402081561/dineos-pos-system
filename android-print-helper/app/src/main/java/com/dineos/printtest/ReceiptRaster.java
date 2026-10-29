@@ -22,10 +22,11 @@ public final class ReceiptRaster {
         List<Block> blocks = new ArrayList<>();
         for (ReceiptDocument.Row row : document.rows) {
             Block block = new Block(); block.rule = row.style.equals("rule");
-            if (block.rule) block.height = 24;
+            if (block.rule) block.height = document.kitchen ? 12 : 24;
             else {
                 TextPaint paint = new TextPaint(Paint.ANTI_ALIAS_FLAG); paint.setColor(Color.BLACK);
                 paint.setTextSize(row.style.equals("heading") ? (width == 576 ? 34 : 30) : (width == 576 ? 26 : 24));
+                if (document.kitchen && row.style.equals("bold")) paint.setTextSize(width == 576 ? 30 : 26);
                 paint.setTypeface(row.style.equals("bold") || row.style.equals("heading") ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
                 if (row.right.isEmpty()) block.left = layout(row.left, available, paint, row.style.equals("heading") || row.style.equals("center") ? Layout.Alignment.ALIGN_CENTER : Layout.Alignment.ALIGN_NORMAL);
                 else {
@@ -34,7 +35,7 @@ public final class ReceiptRaster {
                     block.left = layout(row.left, block.rightX - 12, paint, Layout.Alignment.ALIGN_NORMAL);
                     block.right = layout(row.right, rightWidth, paint, Layout.Alignment.ALIGN_OPPOSITE);
                 }
-                block.height = Math.max(block.left.getHeight(), block.right == null ? 0 : block.right.getHeight()) + 10;
+                block.height = Math.max(block.left.getHeight(), block.right == null ? 0 : block.right.getHeight()) + (document.kitchen ? 4 : 10);
             }
             totalHeight += block.height;
             if (totalHeight > 30000) throw new IOException("Receipt is too long; use browser printing");
@@ -47,7 +48,7 @@ public final class ReceiptRaster {
             Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
             try {
                 Canvas canvas = new Canvas(bitmap); canvas.drawColor(Color.WHITE); canvas.translate(margin, -offset);
-                if (block.rule) { Paint paint = new Paint(); paint.setColor(Color.BLACK); paint.setStrokeWidth(1); canvas.drawLine(0, 12, available, 12, paint); }
+                if (block.rule) { Paint paint = new Paint(); paint.setColor(Color.BLACK); paint.setStrokeWidth(1); canvas.drawLine(0, document.kitchen ? 6 : 12, available, document.kitchen ? 6 : 12, paint); }
                 else { block.left.draw(canvas); if (block.right != null) { canvas.translate(block.rightX, 0); block.right.draw(canvas); } }
                 int[] pixels = new int[width * height]; bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
                 sink.write(EscPos.raster(width, height, pixels));

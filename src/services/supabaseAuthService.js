@@ -22,11 +22,13 @@ function client() {
 }
 
 async function apiUser(accessToken) {
-  const response = await fetch(`${apiUrl}/api/v1/me`, { headers: { Authorization: `Bearer ${accessToken}` } })
+  const response = await fetch(`${apiUrl}/api/v1/me`, { signal: AbortSignal.timeout(15000), headers: { Authorization: `Bearer ${accessToken}` } })
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
     if (response.status === 403 && supabase) await supabase.auth.signOut({ scope: 'local' })
-    throw new Error(body.error || 'The server could not verify this account.')
+    const error = new Error(body.error || 'The server could not verify this account.')
+    error.status = response.status
+    throw error
   }
   return body.user
 }

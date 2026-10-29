@@ -11,11 +11,14 @@ export function counterRequestPayload(draft, settingsRevision, tableSessionId) {
     tableId: draft.tableId,
     expectedTableSessionId: Object.hasOwn(draft, 'expectedTableSessionId') ? draft.expectedTableSessionId : tableSessionId,
     customerNickname: draft.customerNickname,
+    ...(draft.ticketSeat ? {ticketSeat:draft.ticketSeat} : {}),
+    ...(draft.ticketReference ? {ticketReference:draft.ticketReference} : {}),
     items: Object.entries(draft.cart).map(([id, line]) => ({ menuItemId: line.menuItemId ?? id, quantity: line.quantity, orderType: line.orderType ?? 'dine_in', notes: line.notes ?? '', selections: line.selections ?? [] })),
     settingsRevision,
   }
 }
 function validDraft(value, actorId) {
+  if (value && ['ticketSeat','ticketReference'].some((key)=>value[key] !== undefined && !text(value[key],80))) return false
   if (!value || value.actorId !== actorId || !text(value.tableId, 100) || !text(value.customerNickname, 80) || !value.cart || typeof value.cart !== 'object' || Array.isArray(value.cart) || Object.keys(value.cart).length > 30) return false
   if (Object.hasOwn(value, 'expectedTableSessionId') && value.expectedTableSessionId !== null && !text(value.expectedTableSessionId, 100)) return false
   return Object.entries(value.cart).every(([id, line]) => text(id, 20000) && line && text(line.menuItemId, 100) && line.menuItemId && Number.isInteger(line.quantity) && line.quantity >= 1 && line.quantity <= 50 && ['dine_in', 'take_away'].includes(line.orderType) && text(line.notes, 500) && text(line.name, 300) && selectionsValid(line.selections))

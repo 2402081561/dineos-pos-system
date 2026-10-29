@@ -1,7 +1,7 @@
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import SectionHeading from '../../components/common/SectionHeading'
 import StatePanel from '../../components/common/StatePanel'
-import KitchenOrderCard from '../../components/kitchen/KitchenOrderCard'
+import KitchenOrderCard from '../../components/kitchen/PrintableKitchenOrderCard'
 import KitchenOrderSkeleton from '../../components/kitchen/KitchenOrderSkeleton'
 import useKitchenOrders from '../../hooks/useKitchenOrders'
 import { updateSupabaseKitchenOrderStatus } from '../../services/adminApiService'

@@ -20,6 +20,7 @@ function JoinSession() {
   const tableNumber = searchParams.get('table')?.trim() ?? ''
   const [mode, setMode] = useState('welcome')
   const [registeredMember, setRegisteredMember] = useState(null)
+  const [welcomeEmailStatus, setWelcomeEmailStatus] = useState('disabled')
   const [error, setError] = useState('')
   const [isJoining, setIsJoining] = useState(false)
   const joining = useRef(false)
@@ -53,7 +54,7 @@ function JoinSession() {
   }
   function completed(result) {
     activateSession(result.session)
-    if (mode === 'register') { setRegisteredMember(result.member); setMode('success') }
+    if (mode === 'register') { setRegisteredMember(result.member); setWelcomeEmailStatus(result.welcomeEmail?.status ?? 'disabled'); setMode('success') }
     else navigate('/menu', { replace: true })
   }
   function changeMode(next) {
@@ -82,8 +83,10 @@ function JoinSession() {
         {!membership.enabled && <p role="status" className="rounded-xl bg-slate-50 p-3 text-center text-xs leading-5 text-slate-600">{t(membership.isLoading ? 'Checking membership availability...' : 'Member email login is not available yet. You can still order as Guest.')}</p>}
         <p className="pt-2 text-center text-xs leading-5 text-slate-400">{t('Membership is optional. Guest ordering works without an account.')}</p>
       </div>}
-      {['login', 'register'].includes(mode) && (membership.enabled ? <MemberEmailAuth key={`${mode}-${tableNumber}`} purpose={mode} getTableSession={sharedTableSession} onSuccess={completed} onBack={() => changeMode('welcome')} /> : <div><p role="status" className="rounded-xl bg-slate-50 p-3 text-sm">{t('Member email login is not available yet. You can still order as Guest.')}</p><Button className="mt-3 w-full" onClick={() => changeMode('welcome')} variant="outline">{t('← Back')}</Button></div>)}
+      {['login', 'register'].includes(mode) && (membership.enabled ? <MemberEmailAuth key={`${mode}-${tableNumber}`} purpose={mode} testMode={membership.testMode} getTableSession={sharedTableSession} onSuccess={completed} onBack={() => changeMode('welcome')} /> : <div><p role="status" className="rounded-xl bg-slate-50 p-3 text-sm">{t('Member email login is not available yet. You can still order as Guest.')}</p><Button className="mt-3 w-full" onClick={() => changeMode('welcome')} variant="outline">{t('← Back')}</Button></div>)}
       {mode === 'success' && registeredMember && <div className="text-center">
+        {['queued', 'accepted'].includes(welcomeEmailStatus) && <p role="status" className="mb-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">{t('Your welcome email is being processed. You can start ordering now.')}</p>}
+        {welcomeEmailStatus === 'unavailable' && <p role="status" className="mb-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">{t('Your membership is active. The welcome email is temporarily unavailable.')}</p>}
         <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-5"><p className="text-3xl">✓</p><p className="mt-2 font-bold text-emerald-900">{t('Welcome, {{name}}', { name: registeredMember.name })}</p><p className="mt-4 text-xs font-bold text-emerald-700">{t('Your Member ID')}</p><p className="mt-1 text-2xl font-extrabold text-emerald-900">{registeredMember.memberId}</p><p className="mt-3 break-all text-sm text-emerald-800">{registeredMember.email}</p><p className="mt-3 text-xs leading-5 text-emerald-800">{t('Next time, sign in with your email and verification code.')}</p></div>
         <Button className="mt-6 w-full py-3.5" onClick={() => navigate('/menu', { replace: true })}>{t('Start Ordering')}</Button>
       </div>}

@@ -55,7 +55,7 @@ async function cashierHarness() {
     'payment-fixture': `export const fixture={actor:'cashier-A',posts:[],reads:0,committed:new Map(),lose:false,commit:true,setup:{clearableTables:[],floorTables:[],tables:[{tableNumber:'1',orders:[{id:'${orderId}',tableNumber:1,version:1,serviceChargeRate:0,sstRate:0,status:'ready',items:[{id:'${itemId}',name:'Test rice',price:9,quantity:1,paidQuantity:0}]}]}],recentOrders:[],billRequests:[],isLoading:false,error:''}}`,
     useAdminAuth: `import {fixture} from 'payment-fixture';export default ()=>({authUser:{id:fixture.actor}})`,
     useCashierTables: `import {fixture} from 'payment-fixture';export default ()=>fixture.setup`,
-    adminApiService: `import {fixture} from 'payment-fixture';export const clearSupabaseCashierTable=async()=>{};export async function getSupabasePaymentRequest(id){fixture.reads++;return fixture.committed.get(id)??null}export async function completeSupabaseTablePayment(body){fixture.posts.push(body);if(fixture.commit&&!fixture.committed.has(body.requestId))fixture.committed.set(body.requestId,{receiptNumber:'R-test',paidAt:'2026-10-16T04:00:00Z',amount:9,tableId:'table1',tableNumber:1,paymentMethod:'Cash',cashReceived:20,changeAmount:11});if(fixture.lose){fixture.lose=false;throw new TypeError('Test lost response')}return fixture.committed.get(body.requestId)}`,
+    adminApiService: `import {fixture} from 'payment-fixture';export const clearSupabaseCashierTable=async()=>{};export async function getSupabasePaymentRequest(id){fixture.reads++;return fixture.committed.get(id)??null}export async function completeSupabaseTablePayment(body){fixture.posts.push(body);if(fixture.commit&&!fixture.committed.has(body.requestId))fixture.committed.set(body.requestId,{receiptNumber:'R-test',paidAt:'2026-10-16T04:00:00Z',amount:9,tableId:'table1',tableNumber:1,paymentMethod:'Cash',cashReceived:20,changeAmount:11});if(fixture.lose){fixture.lose=false;throw Object.assign(new TypeError('Test lost response'),{status:fixture.failureStatus})}return fixture.committed.get(body.requestId)}`,
   })
   return { ...module, runtime, view: () => runtime.render(module.Page) }
 }
@@ -81,6 +81,27 @@ test('real cashier page refresh checks a lost committed payment without POSTing 
     assert.equal(createPaymentRecoveryStorage(() => b.storage).read('cashier-A'), null)
   } finally { h.runtime.cleanup(); restored?.runtime.cleanup(); b.cleanup() }
 })
+test('database 503 after payment commit preserves recovery and resolves by read without collecting twice', async () => {
+  const b = browser(), h = await cashierHarness()
+  try {
+    byName(h.view(), 'CashierOverview').props.onOpenTable(h.fixture.setup.tables[0])
+    byName(h.view(), 'CashReceivedControl').props.onChange('20')
+    button(h.view(), 'Complete payment').props.onClick()
+    h.fixture.lose = true; h.fixture.failureStatus = 503
+    await byName(h.view(), 'PaymentConfirmationDialog').props.onConfirm()
+    const pending = createPaymentRecoveryStorage(() => b.storage).read('cashier-A')
+    assert.ok(pending?.body.requestId)
+    assert.equal(h.fixture.posts.length, 1)
+    assert.equal(h.fixture.committed.size, 1)
+    const panel = h.view()
+    assert.equal(panel.type.name, 'PaymentRecoveryPanel')
+    h.runtime.render(h.Recovery, panel.props); h.runtime.effects(); await flush()
+    assert.equal(h.fixture.posts.length, 1)
+    assert.equal(h.fixture.reads, 1)
+    assert.equal(byName(h.view(), 'PaymentSuccessPanel').props.payment.receiptNumber, 'R-test')
+  } finally { h.runtime.cleanup(); b.cleanup() }
+})
+
 test('pending payment with no confirmed result only sends on explicit retry, reusing exact ID and quantities', async () => {
   const b = browser(), h = await cashierHarness()
   try {

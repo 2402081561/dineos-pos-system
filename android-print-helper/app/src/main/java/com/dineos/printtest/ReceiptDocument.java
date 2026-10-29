@@ -12,12 +12,14 @@ public final class ReceiptDocument {
         Row(String left, String right, String style) { this.left = left; this.right = right; this.style = style; }
     }
     public final String receiptNumber;
+    public final boolean kitchen;
     public final List<Row> rows;
-    private ReceiptDocument(String number, List<Row> rows) { receiptNumber = number; this.rows = Collections.unmodifiableList(rows); }
+    private ReceiptDocument(String number, List<Row> rows, boolean kitchen) { receiptNumber = number; this.rows = Collections.unmodifiableList(rows); this.kitchen = kitchen; }
     public static ReceiptDocument parse(String json) throws JSONException {
         if (json == null || json.getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) throw new JSONException("Receipt too large");
         JSONObject doc = new JSONObject(json);
-        if (!(doc.get("version") instanceof Number) || doc.getDouble("version") != 1 || !"paid_receipt".equals(doc.getString("kind"))) throw new JSONException("Unsupported receipt format");
+        String kind = doc.getString("kind");
+        if (!(doc.get("version") instanceof Number) || doc.getDouble("version") != 1 || !("paid_receipt".equals(kind) || "kitchen_ticket".equals(kind))) throw new JSONException("Unsupported receipt format");
         String number = text(doc, "receiptNumber", 120);
         if (number.isEmpty()) throw new JSONException("Missing receipt number");
         JSONArray entries = doc.getJSONArray("rows");
@@ -30,7 +32,7 @@ public final class ReceiptDocument {
             if (!styles.contains(style)) throw new JSONException("Unknown row style");
             rows.add(new Row(text(row, "left", 1000), text(row, "right", 120), style));
         }
-        return new ReceiptDocument(number, rows);
+        return new ReceiptDocument(number, rows, "kitchen_ticket".equals(kind));
     }
     public static ReceiptDocument decode(String encoded) throws JSONException {
         if (encoded == null || encoded.length() > 42667 || !encoded.matches("[A-Za-z0-9_-]+")) throw new JSONException("Invalid receipt link");

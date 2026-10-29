@@ -2,7 +2,7 @@
 // late successes/errors from a previous page, session, or selected table.
 import { trackFeed } from './connectionStatus.js'
 
-export function watchPoll(load, onData, onError, { interval = 10000, schedule = setTimeout, cancel = clearTimeout } = {}) {
+export function watchPoll(load, onData, onError, { interval = 10000, schedule = setTimeout, cancel = clearTimeout, eventTarget = typeof window !== 'undefined' ? window : null } = {}) {
   const feed = trackFeed(interval)
   let active = true
   let pending = null
@@ -27,6 +27,9 @@ export function watchPoll(load, onData, onError, { interval = 10000, schedule = 
     return pending
   }
   void refresh()
+  // Read-only refresh, never re-send an order/payment after connectivity returns.
+  const reconnect = () => { void refresh() }
+  eventTarget?.addEventListener?.('online', reconnect)
   return {
     refresh,
     invalidate() { revision++ },
@@ -38,7 +41,7 @@ export function watchPoll(load, onData, onError, { interval = 10000, schedule = 
       if (pending) await pending
       return active ? refresh() : undefined
     },
-    stop() { active = false; controller?.abort(); cancel(timer); feed.stop() },
+    stop() { active = false; controller?.abort(); cancel(timer); eventTarget?.removeEventListener?.('online', reconnect); feed.stop() },
   }
 }
 
