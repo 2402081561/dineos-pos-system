@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { createRuntimeDiagnostics, registerLivenessRoute } from './runtimeDiagnostics.js'
 import { registerTakeawayQrRoutes, pickupFieldsSql, pickupReference, addPickupIdentity } from './takeawayQr.js'
 import { orderPushConfig, registerOrderPushRoutes, createOrderPushWorker } from './orderPush.js'
 import { identifierInput, registerOrderIdentifierRoutes } from './orderIdentifiers.js'
@@ -40,9 +41,11 @@ const allowedOrigins = String(process.env.CLIENT_ORIGINS ?? 'http://localhost:51
 const isDevelopment = process.env.NODE_ENV !== 'production'
 const supabaseUrl = String(process.env.SUPABASE_URL ?? '').replace(/\/$/, '')
 const app = express()
+const runtimeDiagnostics = createRuntimeDiagnostics()
 const pool = createDatabasePool(Pool, process.env.DATABASE_URL)
 
 app.disable('x-powered-by')
+app.use(runtimeDiagnostics.observeRequest)
 app.use(cors({
   origin(origin, callback) {
     const localDevelopmentOrigin = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin ?? '')
@@ -53,6 +56,7 @@ app.use(cors({
   optionsSuccessStatus: 204,
 }))
 app.use(express.json({ limit: '100kb' }))
+registerLivenessRoute(app)
 
 function positiveInteger(value) {
   const parsed = Number(value)
@@ -1405,6 +1409,7 @@ const apiServer = startApiServer(app, port, { onError() {
   process.exitCode = 1
   void pool.end().catch(() => console.error('[API] Failed to close database pool after startup failure.'))
 } })
+runtimeDiagnostics.attach(apiServer, pool)
 let stopWelcomeWorker = () => {}
 let stopOrderPushWorker = () => {}
 apiServer.once('listening', () => { stopWelcomeWorker = welcomeQueue.start(); stopOrderPushWorker = orderPushWorker.start() })
