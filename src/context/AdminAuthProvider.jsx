@@ -31,8 +31,8 @@ function AdminAuthProvider({ children }) {
     return () => { active = false; recovery?.stop(); unsubscribe() }
   }, [])
 
-  async function signIn(email, password) {
-    const user = await signInSupabaseUser(email, password)
+  async function signIn(email, password, options) {
+    const user = await signInSupabaseUser(email, password, options)
     setAuthUser(user)
     setAdminUser(user.role === 'admin' ? user : null)
     setAuthError('')

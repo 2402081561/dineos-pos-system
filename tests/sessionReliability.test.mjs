@@ -216,3 +216,22 @@ test('real staff auth initializes with denied sessionStorage and server failures
     globalThis.fetch = previousFetch
   }
 })
+
+test('explicit staff sign-in submits credentials once, announces verification and keeps the session after an API timeout', async () => {
+  const previousFetch = globalThis.fetch
+  let credentials = 0, verifying = 0, signedOut = 0, reads = 0
+  try {
+    const api = bundle('src/services/supabaseAuthService.js', (name) => name === '@supabase/supabase-js' ? {
+      createClient() { return { auth: {
+        signInWithPassword: async () => { credentials++; return { data: { session: { access_token: 'fake-test-token' } } } },
+        signOut: async () => { signedOut++ },
+      } } },
+    } : undefined)
+    globalThis.fetch = async () => { reads++; throw new DOMException('signal timed out', 'TimeoutError') }
+    await assert.rejects(api.signInSupabaseUser('test@example.test', 'fake-password', { onVerifying: () => { verifying++ } }), error => error.code === 'STAFF_SERVER_UNAVAILABLE')
+    assert.equal(credentials, 1); assert.equal(reads, 1); assert.equal(verifying, 1); assert.equal(signedOut, 0)
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ user: { id: 'test-staff', role: 'cashier' } }) })
+    assert.equal((await api.restoreSupabaseUser({ access_token: 'fake-test-token' })).id, 'test-staff')
+    assert.equal(credentials, 1, 'Recovery reuses the saved session rather than resubmitting credentials')
+  } finally { globalThis.fetch = previousFetch }
+})

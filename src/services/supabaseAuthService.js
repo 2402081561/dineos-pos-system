@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { createTabAuthStorage } from '../utils/authStorage'
+import { readStaffIdentity } from '../utils/staffIdentityRead'
 
 const url = String(import.meta.env.VITE_SUPABASE_URL ?? '').trim().replace(/\/$/, '')
 const publishableKey = String(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? '').trim()
@@ -21,16 +22,12 @@ function client() {
   return supabase
 }
 
-async function apiUser(accessToken) {
-  const response = await fetch(`${apiUrl}/api/v1/me`, { signal: AbortSignal.timeout(15000), headers: { Authorization: `Bearer ${accessToken}` } })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    if (response.status === 403 && supabase) await supabase.auth.signOut({ scope: 'local' })
-    const error = new Error(body.error || 'The server could not verify this account.')
-    error.status = response.status
+async function apiUser(accessToken, options) {
+  try { return await readStaffIdentity(apiUrl, accessToken, options) }
+  catch (error) {
+    if (error.status === 403 && supabase) await supabase.auth.signOut({ scope: 'local' })
     throw error
   }
-  return body.user
 }
 
 export async function getSupabaseAccessToken() {
@@ -77,10 +74,11 @@ export async function authenticatedApiRequest(path, { body, method = 'GET', head
   return result.data
 }
 
-export async function signInSupabaseAdmin(email, password) {
+export async function signInSupabaseAdmin(email, password, { onVerifying } = {}) {
   const { data, error } = await client().auth.signInWithPassword({ email: String(email).trim(), password })
-  if (error) throw new Error('Unable to sign in. Please check your email and password.')
-  const user = await apiUser(data.session.access_token)
+  if (error || !data.session?.access_token) throw new Error('Unable to sign in. Please check your email and password.')
+  onVerifying?.()
+  const user = await apiUser(data.session.access_token, { waitForWakeup: true })
   if (user.role !== 'admin') {
     await client().auth.signOut({ scope: 'local' })
     throw new Error('This account is not authorized for the Admin portal.')
@@ -88,10 +86,11 @@ export async function signInSupabaseAdmin(email, password) {
   return user
 }
 
-export async function signInSupabaseUser(email, password) {
+export async function signInSupabaseUser(email, password, { onVerifying } = {}) {
   const { data, error } = await client().auth.signInWithPassword({ email: String(email).trim(), password })
   if (error || !data.session?.access_token) throw new Error('Unable to sign in. Please check your email and password.')
-  return apiUser(data.session.access_token)
+  onVerifying?.()
+  return apiUser(data.session.access_token, { waitForWakeup: true })
 }
 
 export async function restoreSupabaseAdmin(session) {

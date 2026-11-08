@@ -1,5 +1,8 @@
 // Interface copy only. Shop details, dish names and user-entered notes remain unchanged.
 export const operationalChinese = {
+  'Connecting to restaurant...': '正在连接餐厅服务器…',
+  'The first connection may take about a minute. Please keep this page open and do not submit again.': '首次连接可能需要约一分钟，请保持页面打开，勿重复提交。',
+  'The restaurant server is not responding yet. Please try again shortly. This is not a password error.': '餐厅服务器暂时没有响应，请稍后重试；这不是密码错误。',
   'Take-away ordering': '打包点餐',
   'Your take-away visit has ended. Open the take-away page to start again.': '您的打包点餐记录已结束，请打开打包入口开始新的点餐。',
   'Take-away QR orders stay separate from table bills.': '打包二维码订单必须独立于桌位账单。',
