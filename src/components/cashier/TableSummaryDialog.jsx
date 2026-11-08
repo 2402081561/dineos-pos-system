@@ -29,7 +29,7 @@ function TableSummaryDialog({ table, statusLabel, payment, clearable, onClose, o
   >
     <div className="p-5 sm:p-6">
       <div className="flex items-start justify-between gap-3">
-        <div><p className="eyebrow">{uiText("Table summary")}</p><h2 className="mt-1 text-2xl font-extrabold" id="cashier-table-summary-title">{table ? `Table ${table.tableNumber}` : uiText("Table unavailable")}</h2>{table && <p className="mt-1 break-words text-sm text-slate-500">{floorZone(table)} · {statusLabel}</p>}</div>
+        <div><p className="eyebrow">{uiText("Table summary")}</p><h2 className="mt-1 text-2xl font-extrabold" id="cashier-table-summary-title">{table ? uiText('Table {{number}}', { number: table.tableNumber }) : uiText("Table unavailable")}</h2>{table && <p className="mt-1 break-words text-sm text-slate-500">{uiText(floorZone(table))} · {uiText(statusLabel)}</p>}</div>
         <Button onClick={onClose} variant="outline">{uiText("Close")}</Button>
       </div>
       {!table ? <p className="mt-5 text-sm text-slate-600">{uiText("This table is no longer available. Close this summary to see the updated floor plan.")}</p> : <>

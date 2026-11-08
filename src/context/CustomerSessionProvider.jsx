@@ -21,14 +21,15 @@ function CustomerSessionProvider({ children }) {
   const activeVisitId = useRef(session?.sessionId)
   const retryRestore = useCallback(() => { setRestoreError(''); return verification.current?.refresh() }, [])
 
-  const startSession = useCallback((tableNumber, customerNickname, tableSessionId, sessionId, memberId = '', isSharedTable = false) => {
+  const startSession = useCallback((tableNumber, customerNickname, tableSessionId, sessionId, memberId = '', isSharedTable = false, options = {}) => {
     const nextSession = {
-      tableNumber: String(tableNumber).trim(),
+      tableNumber: options.isTakeawayQr ? null : String(tableNumber).trim(),
       customerNickname: String(customerNickname ?? '').trim() || 'Guest',
       sessionId,
       tableSessionId,
       ...(String(memberId ?? '').trim() ? { memberId: String(memberId).trim() } : {}),
       isSharedTable: Boolean(isSharedTable),
+      ...(options.isTakeawayQr ? { isTakeawayQr: true, visitStatus: options.visitStatus ?? 'active' } : {}),
     }
     saveSession(nextSession)
     activeVisitId.current = sessionId
@@ -70,6 +71,7 @@ function CustomerSessionProvider({ children }) {
   }, [session])
 
   const sessionId = session?.sessionId
+  const isTakeawayQr = session?.isTakeawayQr === true
 
   useEffect(() => {
     if (!sessionId) return () => {}
@@ -81,7 +83,7 @@ function CustomerSessionProvider({ children }) {
         saveSession(nextSession)
         return nextSession
       })
-      setTableSession({ id: verified.tableSessionId, status: 'active' })
+      setTableSession({ id: verified.tableSessionId, status: verified.visitStatus ?? 'active' })
       setSessionError('')
       setIsRestoring(false)
       setRestoreError('')
@@ -91,13 +93,13 @@ function CustomerSessionProvider({ children }) {
       removeStoredSession()
       setSession(null)
       setTableSession(null)
-      setSessionError('Your previous table session has ended. Please scan the table QR code again.')
+      setSessionError(isTakeawayQr ? 'Your take-away visit has ended. Open the take-away page to start again.' : 'Your previous table session has ended. Please scan the table QR code again.')
       setIsRestoring(false)
       setRestoreError('')
     }, { onUnavailable() { if (activeVisitId.current === sessionId) setRestoreError('We could not reconnect to your table. Your cart has been kept. Please try again.') } })
     verification.current = watcher
     return () => { watcher.stop(); verification.current = null }
-  }, [sessionId])
+  }, [sessionId, isTakeawayQr])
 
   return <CustomerSessionContext.Provider value={{ session, tableSession, sessionError, isRestoring, restoreError, retryRestore, startSession, updateSessionNickname, clearSession }}>{children}</CustomerSessionContext.Provider>
 }

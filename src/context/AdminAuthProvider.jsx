@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { AdminAuthContext } from './AdminAuthContext'
 import { restoreSupabaseUser, signInSupabaseUser, signOutSupabaseAdmin, subscribeToSupabaseSession } from '../services/supabaseAuthService'
 import { recoverStaffSession } from '../utils/staffSessionRecovery'
+import { authenticatedApiRequest } from '../services/supabaseAuthService'
+import { disableOrderNotifications } from '../utils/orderNotifications'
 
 function AdminAuthProvider({ children }) {
   const [adminUser, setAdminUser] = useState(null)
@@ -38,6 +40,7 @@ function AdminAuthProvider({ children }) {
   }
 
   async function signOut() {
+    await disableOrderNotifications(authenticatedApiRequest, authUser?.id)
     await signOutSupabaseAdmin()
     setAuthUser(null)
     setAdminUser(null)

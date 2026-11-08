@@ -8,15 +8,7 @@ import TableSummaryDialog from './TableSummaryDialog'
 import { tableStyle } from '../../../server/src/tableAppearance'
 import { layoutHasOverlap, layoutObjects, MARKER_LABELS, overlaps, PLAN_MAX_HEIGHT, TABLE_HEIGHT, TABLE_WIDTH, tablePoint, validPoint } from '../../../server/src/freeFloorLayout'
 import FreeFloorCanvas from './FreeFloorCanvas'
-
-const statusLabels = {
-  available: 'Available',
-  occupied: 'Occupied',
-  ordering: 'Ordering',
-  awaiting_payment: 'Payment due',
-  ready_to_clear: 'Ready to clear',
-  inactive: 'Disabled',
-}
+import { tableStatusLabels as statusLabels } from '../../utils/tableStatusPresentation'
 
 const tileStyles = {
   available: 'border-emerald-200 bg-emerald-50 text-emerald-900',
@@ -220,7 +212,7 @@ function TableFloorPlan({ clearableTables, floorTables, floorPlan = { markers: [
       onMove={moveObject} onSelectTable={chooseTable} onSelectMarker={(marker) => setSelectedId(marker.id)}
       selectedId={isEditing ? selectedId : selectedTableId} tables={visibleLayout.filter((table) => floorZone(table) === area)}
       markers={markers.filter((marker) => marker.zone === area)}
-      renderTable={(table) => <><span className="flex h-28 w-full items-center justify-center"><TableShape table={table} status={tableStatus(table)} /></span><span className="text-[11px] font-semibold leading-tight text-slate-600">{uiText(statusLabels[tableStatus(table)] ?? 'Available')}</span><span className="mt-1 text-xs font-bold text-slate-800">{formatCurrency(table.unpaidTotal)}</span></>}
+      renderTable={(table) => <><span className="flex h-28 w-full items-center justify-center"><TableShape table={table} status={tableStatus(table)} /></span><span className="text-[11px] font-semibold leading-tight text-slate-600">{uiText(statusLabels[tableStatus(table)] ?? 'Vacant')}</span><span className="mt-1 text-xs font-bold text-slate-800">{formatCurrency(table.unpaidTotal)}</span></>}
     />)}
     {summaryId && <TableSummaryDialog table={summaryTable} statusLabel={summaryTable ? statusLabels[tableStatus(summaryTable)] : ''} payment={summaryPayment} clearable={summaryClearable} onClose={() => setSummaryId(null)} onOpenTable={onOpenTable} onClearTable={onClearTable} />}
   </section>

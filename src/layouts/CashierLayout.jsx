@@ -7,6 +7,7 @@ const cashierNavigation = [
   { label: 'New order', to: '/cashier/new-order' },
   { label: 'Receipt history', to: '/cashier/history' },
   { label: 'Shift closing', to: '/cashier/closing' },
+  { label: 'Order notifications', to: '/cashier/notifications' },
 ]
 
 function CashierLayout() {
@@ -16,7 +17,7 @@ function CashierLayout() {
     ? [{ label: '← Back to Admin', to: '/admin/dashboard' }, ...cashierNavigation]
     : cashierNavigation
 
-  return <PortalLayout area="Cashier" navigation={navigation} wideWorkspace={pathname === '/cashier' || pathname === '/cashier/new-order'} subdued={pathname === '/cashier'} />
+  return <PortalLayout area="Cashier" navigation={navigation} wideWorkspace={pathname === '/cashier' || pathname === '/cashier/new-order'} containedWorkspace={pathname === '/cashier/new-order'} subdued={pathname === '/cashier'} />
 }
 
 export default CashierLayout

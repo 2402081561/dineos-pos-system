@@ -28,11 +28,13 @@ test('availability control shows distinct action and confirmed status in both la
   const props = { item, onUpdated: (value) => updated.push(value), onPendingChange: (...args) => pending.push(args) }
   h.runtime.render(h.MenuAvailabilityControl, props); h.runtime.effects()
   assert.match(button(h, props).props['aria-label'], /Mark sold out/)
+  assert.equal(findElement(h.runtime.render(h.MenuAvailabilityControl, props), (node) => node.props?.['aria-live'] === 'polite').props.children, '')
   button(h, props).props.onClick(); await flush()
   assert.deepEqual(h.fixture.requests[0].updates, { isAvailable: false })
   assert.equal(updated[0].isAvailable, false)
   assert.deepEqual(pending, [['rice', true], ['rice', false]])
   assert.match(button(h, props).props['aria-label'], /Restore availability/)
+  assert.match(findElement(h.runtime.render(h.MenuAvailabilityControl, props), (node) => node.props?.['aria-live'] === 'polite').props.className, /text-red-700/)
   assert.match(button(h, props).props.className, /bg-emerald-700/)
   h.fixture.language = 'zh'
   assert.equal(button(h, props).props['aria-label'], 'Chicken Rice：恢复供应')

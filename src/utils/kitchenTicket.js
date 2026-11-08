@@ -10,8 +10,9 @@ export function buildKitchenTicket(order, { tableLabel = '', reference = '', t =
   const rows = []
   const row = (left, style = 'normal') => rows.push({ left: clean(left), right: '', style })
   row(t('Kitchen ticket'), 'heading')
-  row(tableLabel.trim() || (order.tableNumber ?? '—'), 'heading')
-  if (reference.trim()) row(reference, 'heading')
+  row(order.pickupCode || tableLabel.trim() || (order.isWalkIn ? t('Walk-in') : order.tableNumber ?? '—'), 'heading')
+  const pickupReference = order.pickupReference || reference.trim()
+  if (pickupReference) row(pickupReference, 'heading')
   if (order.revisionNote) row(`${t('Order changed')}: ${order.revisionNote}`, 'bold')
   row('', 'rule')
   const groups = new Map([['dine_in', []], ['take_away', []]])

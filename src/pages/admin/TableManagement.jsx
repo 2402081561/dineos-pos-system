@@ -6,13 +6,11 @@ import SectionHeading from '../../components/common/SectionHeading'
 import StatePanel from '../../components/common/StatePanel'
 import TableFormModal from '../../components/admin/TableFormModal'
 import TableQrModal from '../../components/admin/TableQrModal'
+import TakeawayQrCard from '../../components/admin/TakeawayQrCard'
 import useToast from '../../hooks/useToast'
 import useOperationalTables from '../../hooks/useOperationalTables'
+import { tableStatusLabel } from '../../utils/tableStatusPresentation'
 import { clearSupabaseAdminTable as clearCompletedTableSession, createSupabaseAdminTable as createTable, deleteSupabaseAdminTable as deleteTable, updateSupabaseAdminTable as updateTable } from '../../services/adminApiService'
-
-function formatTableStatus(status) {
-  return String(status ?? 'available').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
-}
 
 const statusStyles = {
   available: 'bg-emerald-50 text-emerald-700',
@@ -27,7 +25,7 @@ function TableStatusBadge({ status }) {
   const { t: uiText } = useCustomerLanguage()
   return (
     <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${statusStyles[status] ?? statusStyles.available}`}>
-      {uiText(formatTableStatus(status))}
+      {uiText(tableStatusLabel(status))}
     </span>
   )
 }
@@ -173,6 +171,7 @@ function TableManagement() {
         title={uiText("Manage tables")}
       />
 
+      <TakeawayQrCard />
       {actionError && <p className="rounded-2xl border border-red-100 bg-red-50 p-4 text-sm font-medium text-red-700">{actionError}</p>}
 
       <section className="surface-card overflow-hidden">

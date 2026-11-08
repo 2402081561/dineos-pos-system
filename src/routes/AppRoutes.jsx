@@ -24,6 +24,7 @@ const Bill = lazy(() => import('../pages/customer/Bill'))
 const Cart = lazy(() => import('../pages/customer/Cart'))
 const FoodDetails = lazy(() => import('../pages/customer/FoodDetails'))
 const JoinSession = lazy(() => import('../pages/customer/JoinSession'))
+const TakeawayJoin = lazy(() => import('../pages/customer/TakeawayJoin'))
 const Landing = lazy(() => import('../pages/customer/Landing'))
 const Menu = lazy(() => import('../pages/customer/Menu'))
 const More = lazy(() => import('../pages/customer/More'))
@@ -39,6 +40,7 @@ const Requests = lazy(() => import('../pages/staff/Requests'))
 const Tables = lazy(() => import('../pages/staff/Tables'))
 const CashierDashboard = lazy(() => import('../pages/cashier/Dashboard'))
 const CashierNewOrder = lazy(() => import('../pages/cashier/NewOrder'))
+const Notifications = lazy(() => import('../pages/cashier/Notifications'))
 const Receipt = lazy(() => import('../pages/cashier/Receipt'))
 const ReceiptHistory = lazy(() => import('../pages/cashier/ReceiptHistory'))
 const ShiftClosing = lazy(() => import('../pages/cashier/Closing'))
@@ -52,6 +54,7 @@ function AppRoutes() {
       <Route element={<CustomerLayout />}>
         <Route index element={<Landing />} />
         <Route path="join" element={<JoinSession />} />
+        <Route path="takeaway" element={<TakeawayJoin />} />
         <Route element={<CustomerSessionRoute />}>
           <Route path="tracking" element={<Tracking />} />
           <Route path="menu" element={<Menu />} />
@@ -81,6 +84,7 @@ function AppRoutes() {
       <Route path="cashier" element={<ProtectedCashierRoute><CashierLayout /></ProtectedCashierRoute>}>
         <Route index element={<CashierDashboard />} />
         <Route path="new-order" element={<CashierNewOrder />} />
+        <Route path="notifications" element={<Notifications />} />
         <Route path="history" element={<ReceiptHistory />} />
         <Route path="receipt/:receiptNumber" element={<Receipt />} />
         <Route path="closing" element={<ShiftClosing />} />

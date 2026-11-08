@@ -63,6 +63,19 @@ function browser() { const previous = globalThis.window; const storage = memoryS
 function byName(tree, name) { return findElement(tree, (node) => node.type?.name === name) }
 function button(tree, label) { return findElement(tree, (node) => node.props?.children === label && node.props?.onClick) }
 
+test('discount from the order drawer reaches the existing payment confirmation without collecting early', async () => {
+  const b = browser(), h = await cashierHarness()
+  try {
+    byName(h.view(), 'CashierOverview').props.onOpenTable(h.fixture.setup.tables[0], { discount: { type: 'fixed', value: '5' } })
+    assert.deepEqual(byName(h.view(), 'DiscountControl').props.discount, { type: 'fixed', value: '5' })
+    byName(h.view(), 'CashReceivedControl').props.onChange('10')
+    button(h.view(), 'Complete payment').props.onClick()
+    const confirmation = byName(h.view(), 'PaymentConfirmationDialog')
+    assert.equal(confirmation.props.total, 4)
+    assert.equal(h.fixture.posts.length, 0, 'only the final payment confirmation may send collection')
+  } finally { h.runtime.cleanup(); b.cleanup() }
+})
+
 test('real cashier page refresh checks a lost committed payment without POSTing again, then shows its receipt', async () => {
   const b = browser(), h = await cashierHarness(); let restored
   try {

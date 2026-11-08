@@ -8,7 +8,7 @@ export const roundMoney = (value) => Math.round((value + Number.EPSILON) * 100) 
 export const defaultConfig = {
   ...defaultKitchenConfig,
   logoUrl: '', address: '', phone: '', receiptFooter: 'Thank you! Please come again.',
-  acceptingOrders: true, enforceOpeningHours: false, serviceChargeRate: 10, sstRate: 6,
+  acceptingOrders: true, enforceOpeningHours: false, requireHandoffConfirmation: true, takeawayQrEnabled: false, serviceChargeRate: 10, sstRate: 6,
   openingHours: Array.from({ length: 7 }, (_, day) => ({ day, closed: false, open: '09:00', close: '22:00' })),
 }
 function text(value, max, field, required = false) {
@@ -26,7 +26,7 @@ export function validateStoreConfig(input) {
   const config = { ...defaultConfig, ...input }
   for (const [field, max] of [['logoUrl', 2000], ['address', 300], ['phone', 40], ['receiptFooter', 300]]) config[field] = text(config[field], max, field)
   if (config.logoUrl) { let url; try { url = new URL(config.logoUrl) } catch { /* validated below */ } if (url?.protocol !== 'https:' || url.username || url.password) throw new PosValidationError('Logo must be an HTTPS image URL without credentials.') }
-  for (const field of ['acceptingOrders', 'enforceOpeningHours']) if (typeof config[field] !== 'boolean') throw new PosValidationError(`${field} must be true or false.`)
+  for (const field of ['acceptingOrders', 'enforceOpeningHours', 'requireHandoffConfirmation', 'takeawayQrEnabled']) if (typeof config[field] !== 'boolean') throw new PosValidationError(`${field} must be true or false.`)
   for (const field of ['serviceChargeRate', 'sstRate']) config[field] = amount(config[field], 100)
   for (const [field, max] of [['kitchenCapacity', 20], ['preparationMinMinutes', 120], ['preparationMaxMinutes', 120]]) {
     config[field] = amount(config[field], max)

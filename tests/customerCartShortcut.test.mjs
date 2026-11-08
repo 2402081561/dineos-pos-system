@@ -18,7 +18,7 @@ function renderer() {
       import {ShopSettingsContext} from './src/context/ShopSettingsContext.js';
       import FoodDetailsOrderBar from './src/components/customer/FoodDetailsOrderBar.jsx';
       export function render(path, count=0, joined=true) {
-        return renderToStaticMarkup(<CustomerLanguageProvider><CartContext.Provider value={{cartItemCount:count}}><CustomerSessionContext.Provider value={{session:joined?{tableNumber:1,sessionId:'test-session'}:null}}><AdminAuthContext.Provider value={{authError:'',authUser:null,signOut(){}}}><ShopSettingsContext.Provider value={{name:'DineOS',settings:{isAcceptingOrders:true},isLoading:false,error:''}}><MemoryRouter initialEntries={[path]}><Routes><Route element={<CustomerLayout/>}><Route path="*" element={<div id="menu-body">Menu fixture{path.startsWith('/menu/') && <FoodDetailsOrderBar quantity={1} totalPrice={9} onAdd={()=>{}}/>}</div>}/></Route></Routes></MemoryRouter></ShopSettingsContext.Provider></AdminAuthContext.Provider></CustomerSessionContext.Provider></CartContext.Provider></CustomerLanguageProvider>);
+        return renderToStaticMarkup(<CustomerLanguageProvider><CartContext.Provider value={{cartItemCount:count,cartItems:count?[{unitPrice:9,quantity:count}]:[]}}><CustomerSessionContext.Provider value={{session:joined?{tableNumber:1,sessionId:'test-session'}:null}}><AdminAuthContext.Provider value={{authError:'',authUser:null,signOut(){}}}><ShopSettingsContext.Provider value={{name:'DineOS',settings:{isAcceptingOrders:true},isLoading:false,error:''}}><MemoryRouter initialEntries={[path]}><Routes><Route element={<CustomerLayout/>}><Route path="*" element={<div id="menu-body">Menu fixture{path.startsWith('/menu/') && <FoodDetailsOrderBar quantity={1} totalPrice={9} onAdd={()=>{}}/>}</div>}/></Route></Routes></MemoryRouter></ShopSettingsContext.Provider></AdminAuthContext.Provider></CustomerSessionContext.Provider></CartContext.Provider></CustomerLanguageProvider>);
       }`, resolveDir: root, loader: 'jsx' },
     bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic', define: { 'import.meta.env': '{}' },
   })
@@ -50,13 +50,20 @@ test('real customer layout keeps a fixed SVG cart outside animated content on me
         assert.ok(shortcut.includes(language === 'en' ? 'View cart, 3 items' : '查看购物车，共 3 件'))
         assert.ok(shortcut.includes('>3</span>'))
         assert.ok(html.includes('pb-24'))
+        assert.ok(html.includes('data-mobile-navigation="bottom"'))
+        assert.ok(html.includes('customer-mobile-navigation'))
+        assert.ok(shortcut.includes('RM 27.00'))
+        assert.ok(shortcut.includes(language === 'en' ? 'Items subtotal' : '餐点小计'))
         assert.ok(shortcut.includes(page.startsWith('/menu/') ? 'bottom-[calc(7rem+env(safe-area-inset-bottom))]' : 'bottom-[calc(1.25rem+env(safe-area-inset-bottom))]'))
       }
       const empty = render('/menu', 0)
       assert.ok(empty.includes('data-customer-cart-shortcut'))
+      assert.ok(empty.includes('customer-cart-shortcut--empty'))
+      assert.ok(!empty.includes('RM 0.00'))
       assert.ok(empty.includes(language === 'en' ? 'aria-label="View cart"' : 'aria-label="查看购物车"'))
       assert.ok(!render('/cart', 3).includes('data-customer-cart-shortcut'))
       assert.ok(!render('/join', 3, false).includes('data-customer-cart-shortcut'))
+      assert.ok(!render('/join', 3, false).includes('data-mobile-navigation="bottom"'))
       assert.ok(render('/menu', 8).includes(language === 'en' ? 'View cart, 8 items' : '查看购物车，共 8 件'))
     }
   } finally {

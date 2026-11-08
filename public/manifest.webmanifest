@@ -1,0 +1,14 @@
+{
+  "id": "/",
+  "name": "DineOS",
+  "short_name": "DineOS",
+  "start_url": "/cashier",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fffaf7",
+  "theme_color": "#ea580c",
+  "icons": [
+    { "src": "/branding/dineos-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "/branding/dineos-mark.png", "sizes": "192x192", "type": "image/png", "purpose": "any" }
+  ]
+}

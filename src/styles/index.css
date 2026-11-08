@@ -71,6 +71,78 @@
   }
 }
 
+/* The desktop counter is one viewport. Only its two lists scroll; changing
+   route or using the stacked mobile layout restores normal document scrolling. */
+@media screen and (min-width: 1024px) {
+  html:has([data-contained-workspace="true"]),
+  body:has([data-contained-workspace="true"]) {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+}
+
+.admin-details-backdrop {
+  animation: admin-details-fade 200ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.admin-details-drawer {
+  animation: admin-details-up 300ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.admin-details-panel {
+  animation: admin-details-side 280ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.cashier-order-sheet { animation: cashier-sheet-in 300ms cubic-bezier(.22, 1, .36, 1) both; }
+.cashier-order-sheet.is-closing { animation: cashier-sheet-out 220ms cubic-bezier(.4, 0, .6, 1) both; pointer-events: none; }
+@keyframes cashier-sheet-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes cashier-sheet-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+
+.admin-details-backdrop.is-closing { animation: admin-details-fade-out 220ms ease-in-out both; }
+.admin-details-drawer.is-closing { animation: admin-details-down 220ms cubic-bezier(.4, 0, .6, 1) both; pointer-events: none; }
+.admin-details-panel.is-closing { animation: admin-details-side-out 220ms cubic-bezier(.4, 0, .6, 1) both; pointer-events: none; }
+
+@keyframes admin-details-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes admin-details-up {
+  from { opacity: 0; transform: translateY(40px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes admin-details-side {
+  from { opacity: 0; transform: translateX(32px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes admin-details-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes admin-details-down {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(40px); }
+}
+
+@keyframes admin-details-side-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(32px); }
+}
+
+@media (min-width: 640px) {
+  .admin-details-drawer { animation-name: admin-details-side; }
+  .admin-details-drawer.is-closing { animation-name: admin-details-side-out; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -84,9 +156,122 @@
 
 @media (max-width: 639px) {
   .customer-ui main button { min-height: 44px; }
+  /* Moving the menu during its entrance offsets restored dish anchors. */
+  .customer-ui main:has(.customer-mobile-menu) { animation: none; }
   .customer-ui input:not([type='checkbox']):not([type='radio']),
   .customer-ui textarea,
   .customer-ui select { font-size: 16px; }
+}
+
+.customer-cart-mobile-summary,
+.customer-cart-mobile-arrow { display: none; }
+
+.customer-cart-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 16px; }
+.customer-cart-row-image { width: 64px; height: 64px; object-fit: cover; border-radius: 12px; }
+.customer-cart-row-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.customer-cart-dining fieldset { margin-top: 12px; }
+.customer-cart-dining legend { margin-bottom: 6px; font-size: 12px; font-weight: 500; color: #64748b; }
+.customer-cart-dining label { padding: 8px; font-size: 12px; }
+
+@media (min-width: 640px) {
+  .customer-cart-row { grid-template-columns: 80px minmax(0, 1fr); gap: 16px; padding: 20px; }
+  .customer-cart-row-image { width: 80px; height: 80px; }
+}
+
+@media (max-width: 1023px) {
+  .customer-cart-page { padding-bottom: 140px; }
+  .customer-checkout-bar { position: fixed; z-index: 25; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom)); border-top: 1px solid #e2e8f0; background: #fff; padding: 12px 16px; box-shadow: 0 -5px 20px rgb(15 23 42 / 4%); }
+  .customer-checkout-bar button { min-height: 44px; }
+  .customer-cart-row-heading { flex-direction: column; gap: 2px; }
+  .customer-cart-row-heading > p { align-self: flex-end; }
+  .customer-ui--joined {
+    --customer-header-height: 68px;
+    --customer-navigation-height: 64px;
+    padding-bottom: calc(var(--customer-navigation-height) + env(safe-area-inset-bottom));
+  }
+  .customer-ui--joined [data-portal-header] { height: var(--customer-header-height); }
+  .customer-ui--joined [data-portal-header] > div { height: 100%; padding: 10px 12px; }
+  .customer-ui--joined [data-portal-header] a { font-size: 14px; }
+  .customer-ui--joined [data-portal-header] > div > div > span { padding: 4px 8px; font-size: 11px; white-space: nowrap; }
+  .customer-ui--joined nav[data-mobile-navigation='bottom'] {
+    min-height: calc(var(--customer-navigation-height) + env(safe-area-inset-bottom));
+    padding: 6px 12px calc(6px + env(safe-area-inset-bottom));
+  }
+  .customer-ui--with-cart { padding-bottom: calc(152px + env(safe-area-inset-bottom)); }
+  .customer-cart-shortcut {
+    left: 12px;
+    right: 12px;
+    bottom: calc(74px + env(safe-area-inset-bottom));
+    min-height: 64px;
+    gap: 12px;
+    border-radius: 18px;
+  }
+  .customer-cart-mobile-summary { display: block; }
+  .customer-cart-mobile-arrow { display: inline; }
+  .customer-cart-desktop-count { display: none; }
+  .customer-cart-view-label { flex-shrink: 0; font-size: 13px; }
+  .customer-cart-shortcut--empty {
+    left: auto;
+    min-height: 48px;
+    border-radius: 999px;
+    padding: 10px 14px;
+    gap: 8px;
+  }
+  .customer-cart-shortcut--empty .customer-cart-mobile-arrow,
+  .customer-cart-shortcut--empty .customer-cart-desktop-count { display: none; }
+  .customer-cart-shortcut--details {
+    left: auto;
+    bottom: calc(164px + env(safe-area-inset-bottom));
+    min-height: 48px;
+    border-radius: 999px;
+    padding: 10px 14px;
+    gap: 8px;
+  }
+  .customer-cart-shortcut--details .customer-cart-mobile-summary,
+  .customer-cart-shortcut--details .customer-cart-mobile-arrow { display: none; }
+  .customer-cart-shortcut--details:not(.customer-cart-shortcut--empty) .customer-cart-desktop-count { display: flex; }
+  .customer-food-order-bar { bottom: calc(64px + env(safe-area-inset-bottom)); padding-bottom: 12px; }
+  .customer-mobile-menu { margin: -4px -4px 0; }
+  .customer-mobile-menu-search {
+    position: sticky;
+    top: var(--customer-header-height, 68px);
+    z-index: 10;
+    margin: 0 -12px 12px;
+    padding: 8px 12px 12px;
+    background: #fffaf7;
+  }
+  .customer-mobile-menu-columns { display: grid; grid-template-columns: clamp(88px, 25vw, 112px) minmax(0, 1fr); align-items: start; gap: 12px; }
+  .customer-mobile-categories {
+    position: sticky;
+    top: calc(var(--customer-header-height, 68px) + 68px);
+    max-height: calc(100dvh - 304px - env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+    padding: 4px 4px 8px 0;
+  }
+  .mobile-menu-category {
+    position: relative;
+    display: block;
+    width: 100%;
+    min-height: 48px;
+    border-radius: 10px;
+    padding: 12px 9px;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: left;
+    overflow-wrap: anywhere;
+    transition: color 150ms, background-color 150ms;
+  }
+  .mobile-menu-category:focus-visible { outline: 2px solid #ea580c; outline-offset: -2px; }
+  .mobile-menu-category--active { background: #ffedd5; color: #c2410c; font-weight: 800; }
+  .mobile-menu-category--active::before { position: absolute; inset: 12px auto 12px 0; width: 3px; border-radius: 3px; background: #ea580c; content: ''; }
+  .customer-mobile-menu-results { min-width: 0; scroll-margin-top: 144px; }
+  .mobile-menu-item { display: grid; grid-template-columns: clamp(60px, 17vw, 80px) minmax(0, 1fr); align-items: start; gap: 10px; padding: 14px 0; }
+  .mobile-menu-quantity-button { display: inline-flex; height: 44px; min-height: 44px; width: 36px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 12px; font-size: 23px; font-weight: 600; line-height: 1; }
+  .mobile-menu-quantity-button:focus-visible { outline: 2px solid #c2410c; outline-offset: 2px; }
 }
 
 .receipt-preview { background: #e5e7eb; border-radius: 12px; padding: 24px 16px 40px; }

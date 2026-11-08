@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { pickupFieldsSql } from '../src/takeawayQr.js'
 import { readFile } from 'node:fs/promises'
 import { runInNewContext } from 'node:vm'
 import test from 'node:test'
@@ -82,7 +83,7 @@ test('same idempotency key returns the saved original type, not a replacement or
     return { rows: [] }
   }, release() {} }
   runInNewContext(section, { app: { post(_path, ...list) { handler = list.at(-1) } }, requireCustomerSession() {}, uuid: /^[0-9a-f-]{36}$/i,
-    validateOrderType, orderCartItems: (items) => items, pool: { connect: async () => client },
+    validateOrderType, pickupFieldsSql, orderCartItems: (items) => items, pool: { connect: async () => client },
     insertPreparedOrder() { insertCount++; throw new Error('Must reuse saved order') }, PosValidationError, CounterOrderValidationError })
   const response = { status() { return this }, json(value) { body = value } }
   await handler({ get: () => id, customerSession: { id }, body: { items: [], orderType: 'dine_in' } }, response, (error) => { throw error })

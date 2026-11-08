@@ -14,6 +14,8 @@ async function request(path, { body, method = 'GET', sessionId, idempotencyKey, 
 }
 
 export async function joinCustomerTable(tableNumber, customerNickname = 'Guest') { return (await request(`/api/v1/public/tables/${encodeURIComponent(tableNumber)}/join`, { method: 'POST', body: { customerNickname } })).session }
+export async function getTakeawayQrConfig() { return request('/api/v1/public/takeaway/config') }
+export async function joinTakeawayQr(reference, requestId) { return (await request('/api/v1/public/takeaway/join', { method:'POST', body:{reference}, idempotencyKey:requestId })).session }
 export async function getCustomerSession(sessionId) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 15000)

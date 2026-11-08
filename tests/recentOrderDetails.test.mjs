@@ -91,7 +91,7 @@ test('real detail panel supports mixed items, settled receipt only, hidden zero 
       const paid = module.exports.render({ ...order, paidAmount: 18, paymentStatus: 'paid', receiptNumber: 'R002', latestPaymentAt: '2026-10-09T10:00:00Z' })
       assert.ok(paid.includes('/cashier/receipt/R002?print=1'))
       const compact = module.exports.render({ ...order, cashierName: 'Demo cashier', paidAmount: 18, paymentStatus: 'paid', receiptNumber: 'R002', latestPaymentAt: '2026-10-09T10:00:00Z' }, true)
-      assert.ok(compact.includes(language === 'en' ? 'More details' : '详细资料'))
+      assert.ok(compact.includes(language === 'en' ? 'View full order' : '查看完整订单'))
       assert.ok(compact.includes('Demo cashier'))
       assert.ok(compact.includes('/cashier/receipt/R002?print=1'))
       assert.ok(compact.includes('Less spicy'))

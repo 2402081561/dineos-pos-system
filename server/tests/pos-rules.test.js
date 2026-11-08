@@ -5,6 +5,11 @@ import { buildCounterOrder } from '../src/counterOrder.js'
 import { registerOrderChangeRoutes, validateOrderChange } from '../src/orderChanges.js'
 
 const groups = [{ id: 'temp', name: 'Temperature', min: 1, max: 1, options: [{ id: 'hot', label: 'Hot', price: 0, isAvailable: true }, { id: 'ice', label: 'Ice', price: 0.5, isAvailable: true }] }, { id: 'extras', name: 'Add-ons', min: 0, max: 2, options: [{ id: 'egg', label: 'Egg', price: 1.5, isAvailable: true }, { id: 'milk', label: 'Milk', price: 2, isAvailable: false }] }]
+test('handoff confirmation defaults to on for existing stores and accepts only explicit booleans', () => {
+  assert.equal(validateStoreConfig({}).requireHandoffConfirmation, true)
+  assert.equal(validateStoreConfig({ requireHandoffConfirmation: false }).requireHandoffConfirmation, false)
+  assert.throws(() => validateStoreConfig({ requireHandoffConfirmation: 'false' }))
+})
 test('charges can be disabled independently without changing historical order rates', () => {
   const serviceOnly = validateStoreConfig({ serviceChargeRate: 5, sstRate: 0 })
   const sstOnly = validateStoreConfig({ serviceChargeRate: 0, sstRate: 6 })

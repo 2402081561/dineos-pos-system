@@ -6,6 +6,7 @@ import useAddToCartFeedback from '../../hooks/useAddToCartFeedback'
 import { formatCurrency } from '../../utils/currency'
 import { getImageSource, useImageFallback } from '../../utils/image'
 import { isMenuItemOrderable } from '../../services/orderService'
+import { menuDescription } from '../../utils/menuDescription'
 
 function FoodCard({ categoryName = '', food, compact = false }) {
   const { t } = useCustomerLanguage()
@@ -13,8 +14,9 @@ function FoodCard({ categoryName = '', food, compact = false }) {
   const hasOptions = (food.optionGroups?.length ?? 0) > 0
   const { addItem, isAdded, isAdding, isBusy } = useAddToCartFeedback()
   const isUnavailable = !isMenuItemOrderable(food)
+  const description = menuDescription(food.description)
 
-  return <article className={`interactive-card group flex flex-col overflow-hidden ${compact ? '' : 'h-full'}`}>
+  return <article data-menu-item={food.id} className={`interactive-card group flex flex-col overflow-hidden ${compact ? '' : 'h-full'}`}>
     <Link aria-label={t('View {{name}}', { name: food.name })} className="relative block overflow-hidden bg-slate-100" to={`/menu/${food.id}`}>
       <img alt={food.name || t("Menu item")} className={`w-full object-cover transition duration-500 ease-out ${isUnavailable ? 'grayscale' : 'group-hover:scale-105'} ${compact ? 'h-28' : 'aspect-[4/3]'}`} decoding="async" loading="lazy" onError={useImageFallback} src={getImageSource(food.imageUrl)} />
       <div className="absolute inset-x-0 top-0 flex flex-wrap gap-2 p-3">
@@ -28,7 +30,7 @@ function FoodCard({ categoryName = '', food, compact = false }) {
         <p className="mt-1 break-words text-xs font-semibold leading-5 text-slate-500">{categoryName || t('Menu item')}</p>
         <p className="mt-2 text-base font-extrabold text-orange-600">{formatCurrency(food.price)}</p>
       </div>
-      <p className="mb-3 mt-2 line-clamp-2 text-xs leading-5 text-slate-500 sm:mb-5 sm:mt-3 sm:text-sm">{food.description || t("No description is available for this item.")}</p>
+      {description && <p className="mb-3 mt-2 line-clamp-2 text-xs leading-5 text-slate-500 sm:mb-5 sm:mt-3 sm:text-sm">{description}</p>}
       <div className="mt-auto border-t border-slate-100 pt-3 sm:pt-4">
         {isUnavailable ? <SoldOutButton className="w-full" /> : <Button className="min-h-11 w-full px-2 text-sm" disabled={isBusy} onClick={() => hasOptions ? navigate(`/menu/${food.id}`) : addItem(food)}>{isAdding ? t("Adding...") : isAdded ? t("✔ Added") : hasOptions ? t("Choose options") : t("Add to Cart")}</Button>}
       </div>

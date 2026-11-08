@@ -23,14 +23,14 @@ export default function ReceiptPaper({ receipt }) {
       {receipt.shopSnapshot?.address && <p className="whitespace-pre-line">{receipt.shopSnapshot.address}</p>}
       {receipt.shopSnapshot?.phone && <p>{receipt.shopSnapshot.phone}</p>}
       <p>{uiText("Payment receipt")}</p>
-      <p className="receipt-table-label">{uiText("TABLE")}</p>
-      <p className="receipt-table-number">{receipt.tableNumber ?? '—'}</p>
+      {!receipt.isWalkIn && <p className="receipt-table-label">{uiText("TABLE")}</p>}
+      <p className="receipt-table-number">{receipt.isWalkIn ? uiText('Walk-in') : receipt.tableNumber ?? '—'}</p>
     </header>
     <dl className="receipt-block receipt-information">
       <ReceiptRow label="Receipt"><strong>{receipt.receiptNumber}</strong></ReceiptRow>
       <ReceiptRow label="Date">{uiDate(receipt.paidAt)}</ReceiptRow>
       <ReceiptRow label="Type">{uiText(details.orderType)}</ReceiptRow>
-      <ReceiptRow label="Table">{receipt.tableNumber ?? '—'}</ReceiptRow>
+      <ReceiptRow label={receipt.isWalkIn ? "Walk-in" : "Table"}>{receipt.isWalkIn ? uiText('Walk-in') : receipt.tableNumber ?? '—'}</ReceiptRow>
       <ReceiptRow label="Cashier">{details.cashier}</ReceiptRow>
       <ReceiptRow label="Customer(s)">{uiText(details.customers.join(', ') || 'Guest')}</ReceiptRow>
     </dl>

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { subscribeToSupabasePendingPayments } from '../services/adminApiService'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { watchSupabasePendingPayments } from '../services/adminApiService'
+import { paymentBillKey } from '../utils/orderLocation'
 
 function timeValue(timestamp) {
   const value = timestamp?.toMillis?.() ?? new Date(timestamp).getTime()
@@ -16,32 +17,49 @@ function useCashierTables() {
   const [billRequests, setBillRequests] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
+  const feed = useRef(null)
 
-  useEffect(() => subscribeToSupabasePendingPayments(
-    ({ orders: pendingOrders, clearableTables: readyTables = [], floorTables: currentFloorTables = [], floorPlan: currentFloorPlan = { markers: [], revision: 0 }, summary: currentSummary = null, recentOrders: latestOrders = [], billRequests: requests = [] }) => {
-      setFloorPlan(currentFloorPlan)
-      setBillRequests(requests)
-      setSummary(currentSummary)
-      setRecentOrders(latestOrders)
-      setOrders(pendingOrders)
-      setClearableTables(readyTables)
-      setFloorTables(currentFloorTables)
-      setError('')
-      setIsLoading(false)
-    },
-    (apiError) => {
-      console.error('[Cashier] Failed to load pending payment orders:', apiError)
-      setError('We could not load tables awaiting payment. Please try again shortly.')
-      setIsLoading(false)
-    },
-  ), [])
+  useEffect(() => {
+    let readError = null
+    const watcher = watchSupabasePendingPayments(
+      ({ orders: pendingOrders, clearableTables: readyTables = [], floorTables: currentFloorTables = [], floorPlan: currentFloorPlan = { markers: [], revision: 0 }, summary: currentSummary = null, recentOrders: latestOrders = [], billRequests: requests = [] }) => {
+        setFloorPlan(currentFloorPlan)
+        setBillRequests(requests)
+        setSummary(currentSummary)
+        setRecentOrders(latestOrders)
+        setOrders(pendingOrders)
+        setClearableTables(readyTables)
+        setFloorTables(currentFloorTables)
+        setError('')
+        readError = null
+        setIsLoading(false)
+      },
+      (apiError) => {
+        console.error('[Cashier] Failed to load pending payment orders:', apiError)
+        setError('We could not load tables awaiting payment. Please try again shortly.')
+        readError = apiError
+        setIsLoading(false)
+      },
+    )
+    feed.current = async () => {
+      await watcher.refreshLatest()
+      if (readError) throw readError
+    }
+    return () => { feed.current = null; watcher.stop() }
+  }, [])
+
+  const refreshPayments = useCallback(async () => {
+    if (!feed.current) throw new Error('We could not load tables awaiting payment. Please try again shortly.')
+    await feed.current()
+  }, [])
 
   const tables = useMemo(() => {
     const groups = orders.reduce((result, order) => {
-      const tableNumber = String(order.tableNumber ?? order.tableId ?? '—')
-      const table = result.get(tableNumber) ?? { tableNumber, orders: [] }
+      const billKey = paymentBillKey(order)
+      const tableNumber = order.isWalkIn ? null : String(order.tableNumber ?? order.tableId ?? '—')
+      const table = result.get(billKey) ?? { tableNumber, billKey, isWalkIn: order.isWalkIn === true, tableSessionId: order.tableSessionId, orders: [] }
       table.orders.push(order)
-      result.set(tableNumber, table)
+      result.set(billKey, table)
       return result
     }, new Map())
 
@@ -55,7 +73,7 @@ function useCashierTables() {
       .sort((first, second) => timeValue(second.lastUpdatedAt) - timeValue(first.lastUpdatedAt))
   }, [orders])
 
-  return { clearableTables, error, floorTables, floorPlan, setFloorPlan, isLoading, orders, setFloorTables, tables, summary, recentOrders, billRequests }
+  return { clearableTables, error, floorTables, floorPlan, setFloorPlan, isLoading, orders, setFloorTables, tables, summary, recentOrders, billRequests, refreshPayments }
 }
 
 export default useCashierTables

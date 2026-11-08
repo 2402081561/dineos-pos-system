@@ -16,6 +16,7 @@ function Receipt() {
   const [printError, setPrintError] = useState('')
   const [handedOff, setHandedOff] = useState(false)
   const android = isAndroidPrintDevice(navigator.userAgent)
+  const nativeHelper = android
 
   const { receiptNumber } = useParams()
   const { state } = useLocation()
@@ -30,7 +31,7 @@ function Receipt() {
   useEffect(() => {
     // Chrome requires a fresh tap to open native apps. Never auto-launch the
     // helper after an asynchronous fetch, nor fall through to window.print.
-    if (android || !autoPrint || !canPrint || printedReceipt.current === receiptNumber) return
+    if (nativeHelper || !autoPrint || !canPrint || printedReceipt.current === receiptNumber) return
     let cancelled = false
     waitForReceiptAssets().then(() => {
       if (cancelled) return
@@ -39,7 +40,7 @@ function Receipt() {
       void reprintSupabaseReceipt(receiptNumber).catch((error) => console.error('[Receipt] Reprint audit failed:', error))
     })
     return () => { cancelled = true }
-  }, [android, autoPrint, canPrint, receiptNumber])
+  }, [nativeHelper, autoPrint, canPrint, receiptNumber])
   if (isLoading) return <div className="mx-auto max-w-md animate-pulse rounded-lg bg-white h-[560px]" />
   if (error) return <StatePanel description={uiText(error)} title={uiText("Receipt unavailable")} tone="error" />
   if (!receipt) return <StatePanel description={uiText("The receipt may not exist or is no longer available.")} title={uiText("Receipt not found")} />
@@ -65,7 +66,7 @@ function Receipt() {
   return <div className="receipt-preview">
     <div className="no-print receipt-toolbar">
       {android && <Button onClick={handleAndroidPrint}>{uiText('Print with Bluetooth helper')}</Button>}
-      <Button variant={android ? 'outline' : 'primary'} onClick={handleReprint}>{uiText("Print / Save PDF")}</Button>
+      <Button variant={nativeHelper ? 'outline' : 'primary'} onClick={handleReprint}>{uiText("Print / Save PDF")}</Button>
       <Link className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700" to={returnTo} state={{ orderId: state?.orderId }}>{uiText("Close")}</Link>
     </div>
     {android && <div className="no-print mx-auto mb-4 max-w-lg space-y-2 rounded-xl border border-orange-100 bg-orange-50 p-4 text-sm text-slate-700">

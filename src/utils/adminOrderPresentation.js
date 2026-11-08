@@ -1,5 +1,5 @@
 export function orderNumber(order) {
-  return order.orderNumber ?? `#${String(order.id).slice(-6).toUpperCase()}`
+  return order.pickupCode || order.orderNumber || `#${String(order.id).slice(-6).toUpperCase()}`
 }
 
 export function orderTable(order) {

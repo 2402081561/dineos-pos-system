@@ -4,11 +4,12 @@ const text = (value, max) => typeof value === 'string' && value.length <= max
 const selectionsValid = (value) => Array.isArray(value) && value.length <= 10 && value.every((group) => text(group?.groupId, 64) && group.groupId && Array.isArray(group.optionIds) && group.optionIds.length <= 20 && group.optionIds.every((id) => text(id, 64) && id))
 
 export function emptyCounterDraft(actorId, tableId = '') {
-  return { actorId: actorId ?? '', tableId, customerNickname: '', cart: {}, request: null, recoveryRequired: false }
+  return { actorId: actorId ?? '', tableId, customerNickname: '', defaultOrderType: 'dine_in', cart: {}, request: null, recoveryRequired: false }
 }
 export function counterRequestPayload(draft, settingsRevision, tableSessionId) {
   return {
-    tableId: draft.tableId,
+    tableId: draft.tableId === 'walk-in' ? null : draft.tableId,
+    ...(draft.tableId === 'walk-in' ? { isWalkIn: true } : {}),
     expectedTableSessionId: Object.hasOwn(draft, 'expectedTableSessionId') ? draft.expectedTableSessionId : tableSessionId,
     customerNickname: draft.customerNickname,
     ...(draft.ticketSeat ? {ticketSeat:draft.ticketSeat} : {}),
@@ -18,6 +19,7 @@ export function counterRequestPayload(draft, settingsRevision, tableSessionId) {
   }
 }
 function validDraft(value, actorId) {
+  if (value?.defaultOrderType !== undefined && !['dine_in', 'take_away'].includes(value.defaultOrderType)) return false
   if (value && ['ticketSeat','ticketReference'].some((key)=>value[key] !== undefined && !text(value[key],80))) return false
   if (!value || value.actorId !== actorId || !text(value.tableId, 100) || !text(value.customerNickname, 80) || !value.cart || typeof value.cart !== 'object' || Array.isArray(value.cart) || Object.keys(value.cart).length > 30) return false
   if (Object.hasOwn(value, 'expectedTableSessionId') && value.expectedTableSessionId !== null && !text(value.expectedTableSessionId, 100)) return false
@@ -47,6 +49,9 @@ export function createCounterDraftStorage({ getStorage = () => window.sessionSto
         const record = JSON.parse(raw)
         if (record.version !== 1 || !validDraft(record.draft, actorId) || !validRequest(record.draft)) throw new Error('Damaged draft')
         const draft = record.draft
+        // A shortcut may choose a new table or walk-in only when there is no
+        // unfinished cart/request to protect. Never relabel a pending order.
+        if (tableId && tableId !== draft.tableId && !draft.request && Object.keys(draft.cart).length === 0) return empty
         return { ...draft, recoveryRequired: false, request: draft.request ? { ...draft.request, uncertain: true } : null }
       } catch {
         // Never silently discard an unreadable pending request and mint a new ID.

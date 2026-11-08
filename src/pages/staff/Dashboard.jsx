@@ -6,9 +6,11 @@ import SectionHeading from '../../components/common/SectionHeading'
 import StaffRequestQueue from '../../components/staff/StaffRequestQueue'
 import useStaffRequestAlerts from '../../hooks/useStaffRequestAlerts'
 import useServiceRequests from '../../hooks/useServiceRequests'
+import useShopSettings from '../../hooks/useShopSettings'
 
 function Dashboard() {
   const { t: uiText } = useCustomerLanguage()
+  const { config } = useShopSettings()
 
   const { error, requests, isLoading, refresh } = useServiceRequests()
   const { newRequests, soundEnabled, toggleSound } = useStaffRequestAlerts(requests)
@@ -43,7 +45,7 @@ function Dashboard() {
 
       {newRequests.length > 0 && <section aria-live="polite" className="rounded-2xl border border-orange-200 bg-orange-50 p-4 text-orange-950 shadow-sm"><p className="font-extrabold">🔔 {uiText("{{count}} new service requests", { count: newRequests.length })}</p><p className="mt-1 text-sm text-orange-900">{newRequests.map((request) => `${uiText('Table {{number}}', { number: request.tableNumber ?? '—' })} · ${request.customerNickname || uiText('Guest')}`).join('  •  ')}</p></section>}
 
-      <HandoffQueue /><TakeAwayQueue />
+      {config.requireHandoffConfirmation !== false && <HandoffQueue />}<TakeAwayQueue />
 
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-3">

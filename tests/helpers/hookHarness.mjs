@@ -35,6 +35,7 @@ export function hookRuntime() {
     },
     useId: () => 'test-id',
   }
+  react.useLayoutEffect = react.useEffect
   return {
     react,
     render(fn, props = {}) {

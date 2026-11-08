@@ -54,7 +54,7 @@ test('actual auth provider recovers an unavailable initial session without anoth
   try {
     const h = await bundleHarness(`export {default as Provider} from './src/context/AdminAuthProvider.jsx';export {fixture} from 'restore-fixture'`, runtime, {
       'restore-fixture': 'export const fixture={fail:true,reads:0};',
-      supabaseAuthService: `import {fixture} from 'restore-fixture';export function subscribeToSupabaseSession(callback){fixture.session=callback;return()=>{}};export async function restoreSupabaseUser(){fixture.reads++;if(fixture.fail)throw Object.assign(new Error('offline'),{status:503});return {id:'staff-A',role:'admin'}};export async function signInSupabaseUser(){throw new Error('Must not sign in again')};export async function signOutSupabaseAdmin(){throw new Error('Must not sign out')}`,
+      supabaseAuthService: `import {fixture} from 'restore-fixture';export function subscribeToSupabaseSession(callback){fixture.session=callback;return()=>{}};export async function restoreSupabaseUser(){fixture.reads++;if(fixture.fail)throw Object.assign(new Error('offline'),{status:503});return {id:'staff-A',role:'admin'}};export async function signInSupabaseUser(){throw new Error('Must not sign in again')};export async function signOutSupabaseAdmin(){throw new Error('Must not sign out')};export async function authenticatedApiRequest(){throw new Error('No notification request during identity recovery')}`,
     })
     const view = () => runtime.render(h.Provider).props.value
     view(); runtime.effects(); h.fixture.session({ access_token: 'fake-test-token' }); await flush()

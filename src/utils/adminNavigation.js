@@ -1,5 +1,5 @@
 const adminNavigation = [
-  { label: 'Dashboard', to: '/admin/dashboard', group: 'Daily work' },
+  { label: 'Dashboard', to: '/admin/dashboard' },
   { label: 'Cashier', to: '/cashier', group: 'Daily work' },
   { label: 'Kitchen', to: '/admin/kitchen', group: 'Daily work' },
   { label: 'Orders', to: '/admin/orders', group: 'Daily work' },
@@ -12,5 +12,6 @@ const adminNavigation = [
   { label: 'Rewards', to: '/admin/rewards', group: 'Menu & customers' },
   { label: 'Audit log', to: '/admin/audit-log', group: 'Shop management' },
   { label: 'Shop settings', to: '/admin/settings', group: 'Shop management' },
+  { label: 'Order notifications', to: '/cashier/notifications', group: 'Shop management' },
 ]
 export default adminNavigation

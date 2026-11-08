@@ -6,6 +6,7 @@ import LanguageSwitch from '../../components/customer/LanguageSwitch'
 import Button from '../../components/common/Button'
 import useAdminAuth from '../../hooks/useAdminAuth'
 import BrandMark from '../../components/common/BrandMark'
+import { staffReturnPath } from '../../utils/staffReturnPath'
 
 function Login() {
   const { t: uiText } = useCustomerLanguage()
@@ -25,11 +26,9 @@ function Login() {
     try {
       setIsLoading(true)
       setError('')
-      const destinationByRole = { admin: '/admin/dashboard', cashier: '/cashier', kitchen: '/kitchen', staff: '/staff' }
       const requested = location.state?.from
       const role = (await signIn(email, password)).role
-      const allowedRequested = role === 'admin' ? requested?.startsWith('/admin') : requested?.startsWith(`/${role}`)
-      navigate(allowedRequested ? requested : destinationByRole[role] ?? '/', { replace: true })
+      navigate(staffReturnPath(role, requested), { replace: true })
     } catch (signInError) {
       console.error('[Admin Login] Supabase sign-in failed:', signInError)
       setError(signInError instanceof Error ? signInError.message : 'Unable to sign in. Please check your email and password.')

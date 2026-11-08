@@ -22,6 +22,7 @@
     "@supabase/supabase-js": "^2.112.3",
     "firebase": "^11.10.0",
     "i18next": "^26.4.2",
+    "qrcode": "^1.5.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-i18next": "^17.0.15",

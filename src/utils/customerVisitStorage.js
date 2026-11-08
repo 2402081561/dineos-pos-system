@@ -1,7 +1,9 @@
 import { cartLineId } from './cartOrderType.js'
+import { normalizeMenuBrowse } from './menuBrowseState.js'
 
 const sessionKey = 'dineos-customer-visit-v1'
 const cartKey = 'dineos-customer-cart-v1'
+const browseKey = 'dineos-customer-menu-v1'
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const shortText = (value, max) => typeof value === 'string' && value.length <= max
 
@@ -10,11 +12,12 @@ export function sameCustomerVisit(first, second) {
 }
 
 function validSession(value) {
-  if (!value || !uuid.test(value.sessionId) || !uuid.test(value.tableSessionId) || !/^[1-9]\d*$/.test(String(value.tableNumber)) || !shortText(value.customerNickname, 80)) return null
+  if (!value || !uuid.test(value.sessionId) || !uuid.test(value.tableSessionId) || !(value.isTakeawayQr === true && value.tableNumber == null || /^[1-9]\d*$/.test(String(value.tableNumber))) || !shortText(value.customerNickname, 80)) return null
   return {
     sessionId: value.sessionId, tableSessionId: value.tableSessionId,
-    tableNumber: String(value.tableNumber), customerNickname: value.customerNickname,
+    tableNumber: value.tableNumber == null ? null : String(value.tableNumber), customerNickname: value.customerNickname,
     isSharedTable: value.isSharedTable === true,
+    ...(value.isTakeawayQr === true ? { isTakeawayQr: true, visitStatus: value.visitStatus === 'completed' ? 'completed' : 'active' } : {}),
     ...(uuid.test(value.memberId) ? { memberId: value.memberId } : {}),
   }
 }
@@ -73,7 +76,7 @@ export function createCustomerVisitStorage({ getStorage = () => window.sessionSt
     readSession() {
       const record = read(sessionKey)
       const session = record?.version === 1 ? validSession(record.session) : null
-      if (!session) { remove(sessionKey); remove(cartKey) }
+      if (!session) { remove(sessionKey); remove(cartKey); remove(browseKey) }
       return session
     },
     saveSession(session) {
@@ -81,6 +84,7 @@ export function createCustomerVisitStorage({ getStorage = () => window.sessionSt
       if (!safe) return
       const previous = read(sessionKey)?.session
       if (!sameCustomerVisit(previous, safe)) {
+        remove(browseKey)
         // Only an API-verified merge can rebase a cart. A normal new visit still
         // clears it. Retain the original uncertain request ID and frozen items.
         const draft = read(cartKey)
@@ -93,7 +97,15 @@ export function createCustomerVisitStorage({ getStorage = () => window.sessionSt
       }
       write(sessionKey, { version: 1, session: safe })
     },
-    clearSession() { remove(sessionKey); remove(cartKey) },
+    clearSession() { remove(sessionKey); remove(cartKey); remove(browseKey) },
+    readMenuBrowse(session) {
+      const record = read(browseKey)
+      return normalizeMenuBrowse(record?.version === 1 && sameCustomerVisit(record, session) && sameCustomerVisit(read(sessionKey)?.session, session) ? record.state : null)
+    },
+    saveMenuBrowse(session, state) {
+      if (!session || !sameCustomerVisit(read(sessionKey)?.session, session)) return
+      write(browseKey, { version: 1, sessionId: session.sessionId, tableSessionId: session.tableSessionId, state: normalizeMenuBrowse(state) })
+    },
     readDraft(session) {
       const record = read(cartKey)
       if (!session || record?.version !== 1 || !sameCustomerVisit(record, session)) return emptyCustomerDraft(session)

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { hookRuntime, bundleHarness, findElement, flush, memoryStorage } from './helpers/hookHarness.mjs'
 import { createCounterDraftStorage, emptyCounterDraft, counterRequestPayload } from '../src/utils/counterDraftStorage.js'
+import { counterDefaultOrderType, changeCounterCartType } from '../src/utils/counterOrderType.js'
 
 const tableId = 'a98b5086-dff8-4aca-b8a7-f42459604745'
 const visitId = '66b195a3-18e0-4f2d-a337-42797a0ba97f'
@@ -38,6 +39,99 @@ function browserStorage(storage = memoryStorage()) {
   return { storage, restore() { if (previous === undefined) delete globalThis.window; else globalThis.window = previous } }
 }
 const sampleCart = { rice: { menuItemId: itemId, name: 'Test rice', notes: 'No onion', selections: [], quantity: 1, orderType: 'take_away' } }
+
+test('counter quick type applies to new dishes, preserves mixed existing items and survives refresh', async () => {
+  const browser = browserStorage(), h = await harness(); let next
+  const quick = (app, label) => findElement(app.page(), (node) => node.type === 'button' && node.props.children === label)
+  const rows = (app) => {
+    const items = []
+    function walk(node) {
+      if (!node || typeof node !== 'object') return
+      if (Array.isArray(node)) { node.forEach(walk); return }
+      if (node.type?.name === 'OrderTypeSelector') items.push(node.props.value)
+      Object.values(node.props ?? {}).forEach(walk)
+    }
+    walk(app.page()); return items
+  }
+  try {
+    await h.load(); h.action('Add one Test rice').props.onClick()
+    const scrollBox = findElement(h.page(), (node) => node.props?.['data-counter-order-scroll'])
+    assert.ok(scrollBox.props.className.includes('lg:overflow-y-auto'))
+    assert.ok(scrollBox.props.className.includes('lg:overscroll-contain'))
+    assert.ok(!findElement(scrollBox, (node) => node.props?.['aria-haspopup'] === 'dialog'), 'Expand action remains outside the scrolling list')
+    quick(h, 'Take away').props.onClick()
+    assert.deepEqual(rows(h), ['dine_in'], 'Selecting a default must not silently repack existing dishes')
+    h.action('Add one Test rice').props.onClick()
+    assert.deepEqual(rows(h), ['dine_in', 'take_away'])
+    h.runtime.cleanup(); next = await harness(); await next.load()
+    assert.equal(quick(next, 'Take away').props['aria-pressed'], true)
+    assert.deepEqual(rows(next), ['dine_in', 'take_away'])
+    quick(next, 'Make all take away').props.onClick()
+    assert.deepEqual(rows(next), ['take_away'])
+    next.action('Add one Test rice').props.onClick()
+    await next.submit()
+    assert.deepEqual(next.fixture.requests[0].items.map((item) => [item.orderType, item.quantity]), [['take_away', 3]])
+  } finally { h.runtime.cleanup(); next?.runtime.cleanup(); browser.restore() }
+})
+
+test('take-away default also applies to option dishes and is frozen with an uncertain submission', async () => {
+  const browser = browserStorage(), h = await harness()
+  const quick = (label) => findElement(h.page(), (node) => node.type === 'button' && node.props.children === label)
+  try {
+    await h.load(); quick('Take away').props.onClick()
+    h.fixture.setup.items[0].optionGroups = [{ id: 'optional', label: 'Extras', minSelections: 0, maxSelections: 1, options: [{ id: 'egg', label: 'Egg', price: 1 }] }]
+    findElement(h.page(), (node) => node.type?.name === 'Button' && node.props.children === 'Choose options').props.onClick()
+    findElement(h.page(), (node) => node.type?.name === 'CounterOptionsDialog').props.onAdd(h.fixture.setup.items[0], { selections: [], optionSnapshot: [] })
+    h.fixture.errorStatus = 503; await h.submit()
+    const original = h.fixture.requests[0]
+    assert.equal(original.items[0].orderType, 'take_away')
+    assert.equal(quick('Dine in').props.disabled, true)
+    quick('Dine in').props.onClick()
+    h.fixture.errorStatus = 0; await h.submit()
+    assert.deepEqual(h.fixture.requests[1], original)
+  } finally { h.runtime.cleanup(); browser.restore() }
+})
+
+test('bulk counter packing preserves quantities, notes and options; overflow is atomic', () => {
+  const a = { menuItemId: itemId, name: 'Rice', notes: 'No onion', selections: [], quantity: 2, orderType: 'dine_in' }
+  const cart = { a, b: { ...a, quantity: 3, orderType: 'take_away' }, c: { ...a, notes: 'Extra spicy', quantity: 1 }, d: { ...a, selections: [{ groupId: 'size', optionIds: ['large'] }], quantity: 4 } }
+  const result = changeCounterCartType(cart, 'take_away')
+  assert.equal(result.error, '')
+  assert.equal(Object.keys(result.cart).length, 3)
+  assert.equal(Object.values(result.cart).reduce((sum, line) => sum + line.quantity, 0), 10)
+  assert.ok(Object.values(result.cart).every((line) => line.orderType === 'take_away'))
+  assert.deepEqual(Object.values(result.cart).find((line) => line.notes === 'Extra spicy').quantity, 1)
+  const overflow = { a: { ...a, quantity: 30 }, b: { ...a, quantity: 30, orderType: 'take_away' } }
+  assert.equal(changeCounterCartType(overflow, 'take_away').cart, overflow)
+  assert.ok(changeCounterCartType(overflow, 'take_away').error)
+  assert.equal(counterDefaultOrderType({ cart: sampleCart }), 'take_away', 'Legacy take-away drafts retain a useful default')
+})
+
+test('expanded counter order shares the original draft and never submits or duplicates items', async () => {
+  const browser = browserStorage(), h = await harness()
+  try {
+    await h.load(); h.action('Add one Test rice').props.onClick()
+    const optional = findElement(h.page(), (node) => node.type === 'details' && findElement(node, (child) => child.props?.id === 'counter-name'))
+    assert.ok(optional); assert.ok(!optional.props.open, 'Optional metadata starts collapsed')
+    const edit = findElement(h.page(), (node) => node.type === 'details' && findElement(node, (child) => child.props?.['aria-label'] === 'Note for Test rice'))
+    assert.ok(edit); assert.ok(!edit.props.open, 'Line editing does not consume list space until needed')
+    findElement(h.page(), (node) => node.props?.['aria-haspopup'] === 'dialog').props.onClick()
+    const dialog = findElement(h.page(), (node) => node.type?.name === 'PosDialog')
+    assert.ok(dialog)
+    const sidebar = findElement(h.page(), (node) => node.props?.['aria-label'] === 'Selected dishes')
+    assert.equal(findElement(sidebar, (node) => node.props?.['aria-label'] === 'Increase Test rice'), null, 'Only the expanded view renders the shared controls')
+    h.action('Increase Test rice').props.onClick()
+    h.action('Note for Test rice').props.onChange({ target: { value: 'No onion' } })
+    assert.equal(h.fixture.requests.length, 0)
+    dialog.props.onClose()
+    assert.equal(findElement(h.page(), (node) => node.type?.name === 'PosDialog'), null)
+    assert.equal(h.action('Note for Test rice').props.value, 'No onion')
+    await h.submit()
+    assert.equal(h.fixture.requests.length, 1)
+    assert.equal(h.fixture.requests[0].items[0].quantity, 2)
+    assert.equal(h.fixture.requests[0].items[0].notes, 'No onion')
+  } finally { h.runtime.cleanup(); browser.restore() }
+})
 
 test('counter identifiers persist through refresh and remain frozen with the original uncertain request',async()=>{
   const browser=browserStorage(),h=await harness();let next
@@ -87,7 +181,11 @@ test('refresh restores table, nickname, mixed packing, quantities and notes with
     collect(next.page()); assert.deepEqual(selectors.sort(), ['dine_in', 'take_away'])
     assert.equal(next.action('Note for Test rice').props.value, 'No onion')
     assert.equal(next.fixture.requests.length, 0)
-    assert.ok(findElement(next.page(), (node) => node.props?.children === 'Your unfinished counter order has been restored. Review the table, dishes and latest prices before sending.'))
+    const restored = findElement(next.page(), (node) => node.props?.role === 'status' && node.props.children === 'Draft restored')
+    assert.ok(restored)
+    assert.equal(restored.type, 'span', 'Draft recovery uses an inline hint, not a separate banner')
+    assert.equal(restored.props.title, 'Your unfinished counter order has been restored. Review the table, dishes and latest prices before sending.')
+    assert.ok(!findElement(next.page(), (node) => node.props?.className?.includes('border-blue-100')), 'The large recovery banner no longer consumes list space')
   } finally { h.runtime.cleanup(); next?.runtime.cleanup(); browser.restore() }
 })
 

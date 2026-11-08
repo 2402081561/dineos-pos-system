@@ -2,6 +2,7 @@ import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import SectionHeading from '../../components/common/SectionHeading'
 import StatePanel from '../../components/common/StatePanel'
 import useStaffTables from '../../hooks/useStaffTables'
+import { tableStatusLabel as formatStatus } from '../../utils/tableStatusPresentation'
 
 const statusStyles = {
   available: 'bg-emerald-50 text-emerald-700',
@@ -11,8 +12,6 @@ const statusStyles = {
   ready_to_clear: 'bg-sky-50 text-sky-700',
   inactive: 'bg-slate-100 text-slate-500',
 }
-
-function formatStatus(status) { return String(status ?? 'available').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) }
 
 function Tables() {
   const { t: uiText } = useCustomerLanguage()

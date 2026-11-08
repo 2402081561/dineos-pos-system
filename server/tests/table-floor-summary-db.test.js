@@ -18,6 +18,8 @@ test('PostgreSQL floor summary separates served bills from all unpaid orders and
       CREATE TEMP TABLE restaurant_tables (id text, table_number int, capacity int DEFAULT 4, floor_x int, floor_y int, floor_zone text DEFAULT 'Main hall', floor_style jsonb DEFAULT '{"shape":"square","size":"medium","orientation":"horizontal"}', floor_point jsonb, is_enabled bool DEFAULT true) ON COMMIT DROP;
       CREATE TEMP TABLE table_sessions (id text, table_id text, status text, created_at timestamptz DEFAULT now()) ON COMMIT DROP;
       CREATE TEMP TABLE customer_sessions (table_session_id text, left_at timestamptz) ON COMMIT DROP;
+      CREATE TEMP TABLE shop_settings (id int, config jsonb) ON COMMIT DROP;
+      INSERT INTO shop_settings VALUES (1, '{}');
       CREATE TEMP TABLE orders (table_session_id text, grand_total numeric, status text, payment_status text, paid_amount numeric DEFAULT 0) ON COMMIT DROP;
       INSERT INTO restaurant_tables (id, table_number) VALUES ('t1',1), ('t2',2), ('t3',3), ('t4',4), ('t5',5);
       INSERT INTO table_sessions (id, table_id, status) VALUES ('s1','t1','active'), ('old','t1','completed'), ('s3','t3','active'), ('s4','t4','active'), ('s5','t5','active');
@@ -43,6 +45,14 @@ test('PostgreSQL floor summary separates served bills from all unpaid orders and
     assert.equal(rows.find((row) => row.id === 't3').status, 'awaiting_payment')
     assert.equal(rows.find((row) => row.id === 't4').status, 'ready_to_clear')
     assert.notEqual(rows.find((row) => row.id === 't5').status, 'ready_to_clear')
+    await client.query("INSERT INTO orders VALUES ('s5',10,'ready','paid')")
+    assert.notEqual((await client.query(query)).rows.find((row) => row.id === 't5').status, 'ready_to_clear')
+    await client.query("UPDATE shop_settings SET config = '{\"requireHandoffConfirmation\":false}' WHERE id = 1")
+    assert.equal((await client.query(query)).rows.find((row) => row.id === 't5').status, 'ready_to_clear')
+    await client.query("INSERT INTO orders VALUES ('s5',5,'preparing','paid')")
+    assert.notEqual((await client.query(query)).rows.find((row) => row.id === 't5').status, 'ready_to_clear')
+    await client.query("UPDATE orders SET status = 'ready', payment_status = 'pending' WHERE table_session_id = 's5' AND grand_total = 5")
+    assert.notEqual((await client.query(query)).rows.find((row) => row.id === 't5').status, 'ready_to_clear')
   } finally {
     await client.query('ROLLBACK')
     await client.end()

@@ -1,3 +1,4 @@
+import { orderLocationLabel } from '../../utils/orderLocation'
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { useEffect, useMemo, useState } from 'react'
 import ConfirmationDialog from '../../components/common/ConfirmationDialog'
@@ -6,7 +7,7 @@ import OrderDetailsModal from '../../components/admin/OrderDetailsModal'
 import useToast from '../../hooks/useToast'
 import { cancelOrder, subscribeToAdminOrders } from '../../services/adminOrderService'
 import { formatCurrency } from '../../utils/currency'
-import { orderNumber, orderPaymentLabel, orderStatusLabel, orderStatusStyle, orderTable, orderTypeLabel } from '../../utils/adminOrderPresentation'
+import { orderNumber, orderPaymentLabel, orderStatusLabel, orderStatusStyle, orderTypeLabel } from '../../utils/adminOrderPresentation'
 
 const filters = [['all', 'All orders'], ['unpaid', 'Not paid'], ['partial', 'Partly paid'], ['paid', 'Paid'], ['cancelled', 'Cancelled']]
 
@@ -45,12 +46,12 @@ function OrderManagement() {
     const search = searchTerm.trim().toLowerCase()
     return orders.filter((order) => {
       const type = order.orderType ?? 'dine_in'
-      const searchValue = `${orderNumber(order)} ${order.customerNickname ?? ''} ${orderTable(order)} ${(order.items ?? []).map((item) => item.name).join(' ')}`.toLowerCase()
+      const searchValue = `${orderNumber(order)} ${order.customerNickname ?? ''} ${orderLocationLabel(order, uiText)} ${(order.items ?? []).map((item) => item.name).join(' ')}`.toLowerCase()
       return (statusFilter === 'all' || order.status === statusFilter)
         && (typeFilter === 'all' || type === typeFilter || (type === 'mixed' && typeFilter !== 'mixed'))
         && matchesPaymentFilter(order, paymentFilter) && searchValue.includes(search)
     })
-  }, [orders, searchTerm, statusFilter, typeFilter, paymentFilter])
+  }, [orders, searchTerm, statusFilter, typeFilter, paymentFilter, uiText])
   const selectedOrder = orders.find((order) => order.id === selectedOrderId)
 
   async function handleCancelOrder() {
@@ -82,7 +83,7 @@ function OrderManagement() {
       {!filteredOrders.length ? <div className="p-8"><StatePanel title={orders.length ? uiText("No matching orders") : uiText("No orders yet")} description={orders.length ? uiText("Try another search or filter.") : uiText("New customer orders will appear here automatically.")} /></div> : <div className="overflow-x-auto"><table className="w-full min-w-[850px] table-fixed text-left text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="w-[21%] px-4 py-3 font-semibold">{uiText("Order")}</th><th className="w-[17%] px-4 py-3 font-semibold">{uiText("Status")}</th><th className="w-[15%] px-4 py-3 font-semibold">{uiText("Type / Table")}</th><th className="w-[26%] px-4 py-3 font-semibold">{uiText("Items")}</th><th className="w-[15%] px-4 py-3 text-right font-semibold">{uiText("Total")}</th><th className="w-[6%] px-3 py-3"><span className="sr-only">{uiText("Details")}</span></th></tr></thead><tbody className="divide-y divide-slate-100">{filteredOrders.map((order) => <tr key={order.id} className={`cursor-pointer transition hover:bg-orange-50/40 ${selectedOrderId === order.id ? 'bg-orange-50/50' : ''}`} onClick={() => setSelectedOrderId(order.id)}>
         <td className="px-4 py-4 align-top"><button className="break-words text-left font-bold text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400" onClick={(event) => { event.stopPropagation(); setSelectedOrderId(order.id) }} aria-label={uiText("View order {{v0}}", { v0: orderNumber(order) })}>{orderNumber(order)}</button><p className="mt-1 text-xs text-slate-500">{uiDate(order.createdAt)}</p><p className="mt-1 truncate text-xs text-slate-400">{uiText(order.customerNickname || 'Guest')}</p></td>
         <td className="px-4 py-4 align-top"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${orderStatusStyle(order.status)}`}>{uiText(orderStatusLabel(order.status))}</span>{order.status !== 'cancelled' && <p className={`mt-2 text-xs ${order.paymentStatus === 'paid' ? 'text-emerald-600' : 'text-amber-700'}`}>{uiText(orderPaymentLabel(order))}</p>}</td>
-        <td className="px-4 py-4 align-top"><p className="text-slate-700">{uiText(orderTypeLabel(order.orderType))}</p><p className="mt-1 text-xs text-slate-500">{uiText("Table")}{' '}{orderTable(order)}</p></td>
+        <td className="px-4 py-4 align-top"><p className="text-slate-700">{uiText(orderTypeLabel(order.orderType))}</p><p className="mt-1 text-xs text-slate-500">{orderLocationLabel(order, uiText)}</p></td>
         <td className="px-4 py-4 align-top"><p className="line-clamp-2 leading-5 text-slate-700">{(order.items ?? []).map((item) => `${item.quantity}× ${item.name}`).join(', ') || '—'}</p><p className="mt-1 text-xs text-slate-400">{(order.items ?? []).reduce((sum, item) => sum + Number(item.quantity), 0)}{' '}{uiText("items")}</p></td>
         <td className="px-4 py-4 text-right align-top font-semibold tabular-nums text-slate-900">{formatCurrency(order.grandTotal)}</td><td className="px-3 py-4 text-center align-top text-xl text-slate-400" aria-hidden="true">›</td>
       </tr>)}</tbody></table></div>}

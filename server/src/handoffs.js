@@ -1,4 +1,5 @@
 import { PosValidationError } from './posRules.js'
+import { pickupFieldsSql } from './takeawayQr.js'
 
 export function validateHandoff(order, item, quantity, version) {
   if (!order || order.status !== 'ready') throw new PosValidationError('The kitchen has not marked this order ready.', 409)
@@ -9,10 +10,10 @@ export function validateHandoff(order, item, quantity, version) {
 export function registerHandoffRoutes(app, { pool, requireAuthenticatedUser, requireRole }) {
   app.get('/api/v1/staff/handoffs', requireAuthenticatedUser, requireRole('admin', 'cashier', 'staff'), async (_request, response, next) => {
     try {
-      const { rows } = await pool.query(`SELECT orders.id, orders.version, orders.order_number AS "orderNumber", orders.status, orders.payment_status AS "paymentStatus", restaurant_tables.table_number AS "tableNumber", restaurant_tables.id AS "tableId",
+      const { rows } = await pool.query(`SELECT orders.id, ${pickupFieldsSql}, orders.version, orders.order_number AS "orderNumber", orders.status, orders.payment_status AS "paymentStatus", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn", restaurant_tables.id AS "tableId",
         jsonb_agg(jsonb_build_object('id', order_items.id, 'name', item_name, 'quantity', quantity, 'fulfilledQuantity', fulfilled_quantity, 'orderType', order_items.order_type, 'notes', notes, 'optionSnapshot', option_snapshot) ORDER BY order_items.id) AS items
-        FROM orders JOIN order_items ON order_items.order_id = orders.id JOIN table_sessions ON table_sessions.id = orders.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
-        WHERE orders.status = 'ready' AND fulfilled_quantity < quantity GROUP BY orders.id, restaurant_tables.id ORDER BY orders.created_at`)
+        FROM orders JOIN order_items ON order_items.order_id = orders.id JOIN table_sessions ON table_sessions.id = orders.table_session_id LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+        WHERE orders.status = 'ready' AND fulfilled_quantity < quantity AND table_sessions.status = 'active' GROUP BY orders.id, restaurant_tables.id ORDER BY orders.created_at`)
       response.json({ orders: rows })
     } catch (error) { next(error) }
   })

@@ -1,4 +1,6 @@
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
+import { orderLocationLabel } from '../../utils/orderLocation'
+import { counterDefaultOrderType, changeCounterCartType } from '../../utils/counterOrderType'
 import CounterIdentifierFields from '../../components/cashier/CounterIdentifierFields'
 import { hasSavedTableVisitTools } from '../../utils/deploymentFeatures'
 import { cartLineId, moveCartQuantity } from '../../utils/cartOrderType'
@@ -7,6 +9,7 @@ import OrderTypeBadge from '../../components/common/OrderTypeBadge'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import Button from '../../components/common/Button'
+import PosDialog from '../../components/common/PosDialog'
 import MenuAvailabilityControl from '../../components/common/MenuAvailabilityControl'
 import ConfirmationDialog from '../../components/common/ConfirmationDialog'
 import useAdminAuth from '../../hooks/useAdminAuth'
@@ -30,8 +33,9 @@ function NewOrder() {
   const actorId = authUser?.id
   const activeActor = useRef(actorId)
   activeActor.current = actorId
-  const { draft, isLocked, storageWarning, updateDraft, prepareRequest, markUncertain, rejectRequest, completeRequest, discardDamagedDraft } = useCounterOrderDraft(actorId, searchParams.get('tableId') || '')
+  const { draft, isLocked, storageWarning, updateDraft, prepareRequest, markUncertain, rejectRequest, completeRequest, discardDamagedDraft } = useCounterOrderDraft(actorId, searchParams.get('walkIn') === '1' ? 'walk-in' : searchParams.get('tableId') || '')
   const { tableId: selectedTableId, customerNickname, cart } = draft
+  const defaultOrderType = counterDefaultOrderType(draft)
   const hasPendingRequest = Boolean(draft.request)
   const [restored] = useState(Object.keys(cart).length > 0)
   const [isDiscarding, setIsDiscarding] = useState(false)
@@ -42,6 +46,7 @@ function NewOrder() {
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('All')
   const [optionItem, setOptionItem] = useState(null)
+  const [isOrderExpanded, setIsOrderExpanded] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [availabilityUpdates, setAvailabilityUpdates] = useState(new Set())
   const [placedOrder, setPlacedOrder] = useState(null)
@@ -99,7 +104,9 @@ function NewOrder() {
     return () => { active = false }
   }, [])
 
-  const currentTable = setup?.tables.find((table) => table.id === selectedTableId)
+  const currentTable = selectedTableId === 'walk-in' && setup?.walkInEnabled
+    ? { id: 'walk-in', tableNumber: null, tableSessionId: null, isWalkIn: true }
+    : setup?.tables.find((table) => table.id === selectedTableId)
   const selectedTable = currentTable ?? (hasPendingRequest ? { id: selectedTableId, tableNumber: draft.tableNumber || '—' } : null)
   const tableVisitChanged = Boolean(!hasPendingRequest && selectedTableId && setup && (!currentTable || (Object.hasOwn(draft, 'expectedTableSessionId') && draft.expectedTableSessionId !== (currentTable.tableSessionId ?? null))))
   const menu = useMemo(() => setup?.items ?? [], [setup])
@@ -123,19 +130,31 @@ function NewOrder() {
   const serviceCharge = amounts?.serviceCharge ?? null
   const sst = amounts?.sst ?? null
   const total = amounts?.grandTotal ?? null
+  const hasDifferentItemType = cartItems.some((item) => item.orderType !== defaultOrderType)
+  function chooseDefaultType(type) {
+    if (isEditingDisabled) return
+    changeDraft((current) => ({ ...current, defaultOrderType: type }))
+    setSubmitError('')
+  }
+  function applyTypeToAll() {
+    if (isEditingDisabled) return
+    const result = changeCounterCartType(cart, defaultOrderType)
+    if (!result.error) changeDraft((current) => ({ ...current, cart: result.cart, defaultOrderType }))
+    setSubmitError(result.error)
+  }
   function addOptionLine(item, options) {
     if (isLocked || submitting.current) return
-    const id = cartLineId(item.id, '', options.selections)
-    setCart((current) => ({ ...current, [id]: { ...current[id], menuItemId: item.id, orderType: 'dine_in', selections: options.selections, optionSnapshot: options.optionSnapshot, name: item.name, notes: current[id]?.notes ?? '', quantity: Math.min(50, (current[id]?.quantity ?? 0) + 1) } }))
+    const id = cartLineId(item.id, '', options.selections, defaultOrderType)
+    setCart((current) => ({ ...current, [id]: { ...current[id], menuItemId: item.id, orderType: defaultOrderType, selections: options.selections, optionSnapshot: options.optionSnapshot, name: item.name, notes: current[id]?.notes ?? '', quantity: Math.min(50, (current[id]?.quantity ?? 0) + 1) } }))
     setSubmitError('')
   }
 
   function addMenuItem(item) {
-    const id = cartLineId(item.id, '', [])
+    const id = cartLineId(item.id, '', [], defaultOrderType)
     updateCart(id, (cart[id]?.quantity ?? 0) + 1, item)
   }
   function removeMenuItem(item) {
-    const line = cartItems.find((line) => line.menuItemId === item.id && line.orderType === 'dine_in') ?? cartItems.find((line) => line.menuItemId === item.id)
+    const line = cartItems.find((line) => line.menuItemId === item.id && line.orderType === defaultOrderType) ?? cartItems.find((line) => line.menuItemId === item.id)
     if (line) updateCart(line.id, line.quantity - 1)
   }
   function changeType(item, type, quantity = item.quantity) {
@@ -152,7 +171,7 @@ function NewOrder() {
     setCart((current) => {
       const next = { ...current }
       if (quantity <= 0) delete next[itemId]
-      else next[itemId] = { ...current[itemId], menuItemId: current[itemId]?.menuItemId ?? menuItem?.id, selections: current[itemId]?.selections ?? [], orderType: current[itemId]?.orderType ?? 'dine_in', quantity: Math.min(quantity, 50), notes: current[itemId]?.notes ?? '', name: menuItem?.name ?? menu.find((item) => item.id === itemId)?.name ?? current[itemId]?.name ?? 'Menu item' }
+      else next[itemId] = { ...current[itemId], menuItemId: current[itemId]?.menuItemId ?? menuItem?.id, selections: current[itemId]?.selections ?? [], orderType: current[itemId]?.orderType ?? defaultOrderType, quantity: Math.min(quantity, 50), notes: current[itemId]?.notes ?? '', name: menuItem?.name ?? menu.find((item) => item.id === itemId)?.name ?? current[itemId]?.name ?? 'Menu item' }
       return next
     })
     setSubmitError('')
@@ -191,34 +210,50 @@ function NewOrder() {
     }
   }
 
-  if (placedOrder?.actorId === actorId && placedOrder) return <div className="mx-auto max-w-xl space-y-6">
-    <SectionHeading eyebrow={uiText("Cashier POS")} title={uiText("Order sent to kitchen")} description={uiText("Table {{v0}} · Order {{v1}}", { v0: placedOrder.tableNumber, v1: placedOrder.tableOrderNumber ?? 'received' })} />
+  const orderItemsContent = <>
+          <div className="space-y-3">{cartItems.map((item) => <div className="rounded-xl border border-slate-100 p-2.5" key={item.id}>
+            <div className="flex items-start gap-2.5"><img alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" loading="lazy" onError={useImageFallback} src={getImageSource(item.imageUrl)} /><div className="min-w-0 flex-1"><strong className="block break-words text-xs leading-5">{item.quantity} × {item.name}</strong><span className="mt-1 block text-xs font-semibold text-orange-700">{formatCurrency(Number(item.price) * item.quantity)}</span><OptionSummary item={item} /></div></div><div className="mt-2 flex items-center gap-2"><button aria-label={uiText("Decrease {{v0}}", { v0: item.name })} className="h-7 w-7 rounded bg-slate-100 font-bold" disabled={isEditingDisabled} type="button" onClick={() => updateCart(item.id, item.quantity - 1)}>−</button><span className="text-xs">{item.quantity}</span><button aria-label={uiText("Increase {{v0}}", { v0: item.name })} className="h-7 w-7 rounded bg-orange-50 font-bold text-orange-700" disabled={isEditingDisabled || item.quantity >= 50} type="button" onClick={() => updateCart(item.id, item.quantity + 1)}>+</button><button className="ml-auto text-xs text-red-600" disabled={isEditingDisabled} type="button" onClick={() => updateCart(item.id, 0)}>{uiText("Remove")}</button></div>
+            <details className="mt-2 rounded-lg bg-slate-50 px-2"><summary className="cursor-pointer py-2 text-xs font-semibold text-slate-600">{uiText('Edit / notes')}{item.notes && <span className="ml-2 font-normal">{item.notes}</span>}</summary><OrderTypeSelector compact dense value={item.orderType} onChange={(type) => changeType(item, type)} disabled={isEditingDisabled} />{item.quantity > 1 && <button className="mt-2 rounded border border-orange-200 p-2 text-xs font-bold text-orange-700" disabled={isEditingDisabled} type="button" onClick={() => changeType(item, item.orderType === "take_away" ? "dine_in" : "take_away", 1)}>{item.orderType === "take_away" ? uiText("Dine in 1 separately") : uiText("Pack 1 separately")}</button>}<input aria-label={uiText("Note for {{v0}}", { v0: item.name })} className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs" disabled={isEditingDisabled} maxLength={500} onChange={(event) => updateNotes(item.id, event.target.value)} placeholder={uiText("Kitchen note (optional)")} value={item.notes} /></details>
+          </div>)}{Object.entries(cart).filter(([id, line]) => !menu.some((item) => item.id === (line.menuItemId ?? id))).map(([id, item]) => <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm" key={id}><strong>{item.name}{' '}{uiText("is no longer on the menu.")}</strong><button className="mt-2 block text-red-700 underline" disabled={isEditingDisabled} onClick={() => updateCart(id, 0)} type="button">{uiText("Remove item")}</button></div>)}</div>
+          {cartItems.length === 0 && <div className="py-6 text-center"><span aria-hidden="true" className="text-2xl text-slate-300">⌑</span><p className="mt-2 text-xs text-slate-500">{uiText("No dishes selected yet.")}</p></div>}
+          {hasInvalidItems && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{uiText("A dish is unavailable or invalid. Remove it, then review the order.")}</p>}
+          {submitError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{uiText(submitError)} <button className="mt-2 block font-bold underline" disabled={isLoading} onClick={() => void loadSetup()} type="button">{uiText("Refresh and review")}</button></p>}
+  </>
+
+
+  if (placedOrder?.actorId === actorId && placedOrder) return <div className="mx-auto max-w-xl space-y-6 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
+    <SectionHeading eyebrow={uiText("Cashier POS")} title={uiText("Order sent to kitchen")} description={orderLocationLabel(placedOrder, uiText)} />
     <div className="surface-card p-6"><OrderTypeBadge orderType={placedOrder.orderType} /><p className="text-sm text-slate-600">{uiText("The kitchen can now prepare this order. Payment and serving or collection are recorded separately.")}</p><p className="mt-4 text-xl font-bold text-orange-600">{formatCurrency(placedOrder.grandTotal)}</p></div>
-    <div className="flex flex-wrap gap-3"><Button onClick={() => { setPlacedOrder(null); void loadSetup() }}>{uiText("Another order")}</Button><Link className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold" to={placedOrder.tableId ? `/cashier?tableId=${encodeURIComponent(placedOrder.tableId)}` : "/cashier"}>{uiText("Back to dashboard")}</Link></div>
+    <div className="flex flex-wrap gap-3">{placedOrder.isWalkIn && <Link className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-bold text-white" to="/cashier" state={{ orderId: placedOrder.id }}>{uiText('Collect payment')}</Link>}<Button variant="outline" onClick={() => { setPlacedOrder(null); void loadSetup() }}>{uiText("Another order")}</Button><Link className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold" to={placedOrder.tableId ? `/cashier?tableId=${encodeURIComponent(placedOrder.tableId)}` : "/cashier"}>{uiText("Back to dashboard")}</Link></div>
   </div>
 
-  return <div className="space-y-4">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><h1 className="text-xl font-bold tracking-tight text-slate-900">{uiText("New counter order")}</h1><p className="mt-1 text-xs text-slate-500">{uiText("Select a table, add dishes and send the order to the kitchen.")}</p></div>
-      <div className="flex flex-wrap items-center gap-3">
-        {setup && <button className="text-xs font-semibold text-orange-700 underline underline-offset-4 disabled:opacity-50" disabled={isLoading || isSubmitting} onClick={() => void loadSetup()} type="button">{isLoading ? uiText("Refreshing...") : uiText("Refresh tables & menu")}</button>}
-        <Link className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:border-orange-200 hover:text-orange-700" to={selectedTableId ? `/cashier?tableId=${encodeURIComponent(selectedTableId)}` : "/cashier"}>{uiText("Back to dashboard")}</Link>
+  return <div className="space-y-4 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:gap-4 lg:overflow-hidden lg:space-y-0">
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-3"><h1 className="text-sm font-semibold text-slate-700">{uiText("New order")}</h1>{restored && Object.keys(cart).length > 0 && !hasPendingRequest && <span role="status" title={uiText('Your unfinished counter order has been restored. Review the table, dishes and latest prices before sending.')} className="text-[11px] text-slate-500">{uiText('Draft restored')}</span>}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        {setup && <button className="min-h-9 rounded-md px-2 text-xs font-semibold text-orange-700 hover:bg-orange-50 disabled:opacity-50" disabled={isLoading || isSubmitting} onClick={() => void loadSetup()} type="button">{isLoading ? uiText("Refreshing...") : uiText("Refresh tables & menu")}</button>}
+        <Link className="rounded-md px-2 py-2 text-xs font-semibold text-slate-500 hover:bg-white hover:text-orange-700" to={selectedTableId && selectedTableId !== 'walk-in' ? `/cashier?tableId=${encodeURIComponent(selectedTableId)}` : "/cashier"}>{uiText("Back to dashboard")}</Link>
       </div>
     </div>
-    {restored && Object.keys(cart).length > 0 && !hasPendingRequest && <p role="status" className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-800">{uiText('Your unfinished counter order has been restored. Review the table, dishes and latest prices before sending.')}</p>}
     {storageWarning && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{uiText('Your browser could not save this order safely. Enable session storage before sending.')}</p>}
     {hasPendingRequest && <section role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"><h2 className="font-bold">{uiText('Order confirmation pending')}</h2><p className="mt-1">{uiText('Your previous counter order is awaiting confirmation. Retry it before changing dishes or tables.')}</p>{!setup && <Button className="mt-3" disabled={isSubmitting} onClick={() => void placeOrder({ preventDefault() {} })}>{isSubmitting ? uiText('Sending order...') : uiText('Retry previous order')}</Button>}</section>}
     {draft.recoveryRequired && <section role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p>{uiText('Review your saved counter order before continuing.')}</p><p className="mt-1">{uiText('Check recent orders before discarding a damaged draft to avoid a duplicate order.')}</p><div className="mt-3 flex flex-wrap gap-3"><Link to="/cashier" className="font-bold underline">{uiText('Back to dashboard')}</Link><button type="button" className="font-bold underline" onClick={() => setIsDiscarding(true)}>{uiText('Discard damaged draft')}</button></div></section>}
     {tableVisitChanged && <section role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>{uiText('This table visit changed. Review the bill and select the table again before sending this draft.')}</p><Button className="mt-2" onClick={() => setSelectedTableId('')} variant="outline">{uiText('Review table selection')}</Button></section>}
     {loadError && <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{uiText(loadError)} <button className="ml-2 font-bold underline" onClick={() => void loadSetup()} type="button">{uiText("Retry")}</button></div>}
-    {isLoading && !setup ? <StatePanel title={uiText("Loading tables and menu")} description={uiText("Please wait a moment.")} /> : !setup ? null : <form className="grid min-w-0 gap-4 lg:h-[calc(100dvh-11.5rem)] lg:min-h-[32rem] lg:grid-cols-[minmax(0,1fr)_320px]" onSubmit={placeOrder}>
+    {isLoading && !setup ? <StatePanel title={uiText("Loading tables and menu")} description={uiText("Please wait a moment.")} /> : !setup ? null : <form className="grid min-w-0 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_360px]" onSubmit={placeOrder}>
       <section aria-label={uiText("Counter menu")} className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm">
         <div className="shrink-0 border-b border-slate-100 p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-bold">{uiText("Menu")}</h2>
             <div className="relative w-full sm:w-64"><span aria-hidden="true" className="pointer-events-none absolute left-3 top-2.5 text-slate-400">⌕</span><input aria-label={uiText("Search menu")} className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm" onChange={(event) => setSearch(event.target.value)} placeholder={uiText("Search dishes or drinks")} type="search" value={search} /></div>
           </div>
-          <div aria-label={uiText("Menu categories")} className="mt-3 flex flex-wrap gap-1.5">{categories.map((name) => <button aria-pressed={category === name} className={`max-w-full break-words rounded-lg px-3 py-2 text-xs font-semibold transition ${category === name ? 'bg-orange-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-orange-50 hover:text-orange-700'}`} key={name} onClick={() => setCategory(name)} type="button">{name}</button>)}</div>
+          <div aria-label={uiText("Menu categories")} className="mt-3 flex gap-1.5 overflow-x-auto pb-1">{categories.map((name) => <button title={name} aria-pressed={category === name} className={`max-w-56 shrink-0 truncate rounded-lg px-3 py-2 text-xs font-semibold transition ${category === name ? 'bg-orange-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-orange-50 hover:text-orange-700'}`} key={name} onClick={() => setCategory(name)} type="button">{name}</button>)}</div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3" role="group" aria-label={uiText('New dishes order type')}>
+            <span className="mr-1 text-xs font-semibold text-slate-500">{uiText('New dishes')}</span>
+            {[['dine_in', 'Dine in'], ['take_away', 'Take away']].map(([type, label]) => <button type="button" key={type} disabled={isEditingDisabled} aria-pressed={defaultOrderType === type} onClick={() => chooseDefaultType(type)} className={`min-h-11 rounded-lg border px-5 py-2 text-sm font-bold transition-colors disabled:opacity-50 ${defaultOrderType === type ? 'border-orange-600 bg-orange-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-orange-300 hover:bg-orange-50'}`}>{uiText(label)}</button>)}
+            {hasDifferentItemType && <button type="button" disabled={isEditingDisabled} onClick={applyTypeToAll} className="min-h-11 rounded-lg px-3 py-2 text-xs font-semibold text-orange-700 underline underline-offset-4 disabled:opacity-50">{uiText(defaultOrderType === 'take_away' ? 'Make all take away' : 'Make all dine in')}</button>}
+          </div>
+          <p className="sr-only" role="status">{uiText(defaultOrderType === 'take_away' ? 'New dishes will be packed. Existing items stay unchanged.' : 'New dishes are dine-in. Existing items stay unchanged.')}</p>
         </div>
         <div aria-label={uiText("Menu dishes")} className="min-h-0 p-3 sm:p-4 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{filtered.map((item) => {
@@ -234,31 +269,28 @@ function NewOrder() {
         </div>
       </section>
       <aside aria-label={uiText("Order summary")} className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm">
-        <div className="shrink-0 border-b border-slate-100 p-4">
+        <div className="shrink-0 border-b border-slate-100 p-4 lg:max-h-[40%] lg:overflow-y-auto lg:overscroll-contain">
           <h2 className="text-lg font-bold">{uiText("Order summary")}</h2>
           <label className="mt-3 block text-xs font-semibold text-slate-600" htmlFor="counter-table">{uiText("Table")}{' '}</label>
-          <select id="counter-table" className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" disabled={isEditingDisabled} required value={selectedTableId} onChange={(event) => { setSelectedTableId(event.target.value); setSubmitError('') }}><option value="">{uiText("Choose a table")}</option>{selectedTableId && !currentTable && <option value={selectedTableId} disabled>{uiText("Table")}{' '}{draft.tableNumber || '—'}</option>}{setup.tables.map((table) => <option key={table.id} value={table.id}>{uiText("Table")}{' '}{table.tableNumber}</option>)}</select>
+          <select id="counter-table" className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" disabled={isEditingDisabled} required value={selectedTableId} onChange={(event) => { setSelectedTableId(event.target.value); setSubmitError('') }}><option value="">{uiText("Choose a table")}</option>{setup.walkInEnabled && <option value="walk-in">{uiText("Walk-in (no table)")}</option>}{selectedTableId && !currentTable && <option value={selectedTableId} disabled>{selectedTableId === 'walk-in' ? uiText('Walk-in (no table)') : `${uiText("Table")} ${draft.tableNumber || '—'}`}</option>}{setup.tables.map((table) => <option key={table.id} value={table.id}>{uiText("Table")}{' '}{table.tableNumber}</option>)}</select>
           {setup.tables.length === 0 && <p className="mt-2 text-xs text-slate-500">{uiText("No enabled tables are available.")}</p>}
-          <p className="mt-3 text-xs text-slate-500">{uiText("Choose Dine in or Take away separately for each dish below.")}</p>
+          <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50/50 px-3">
+            <summary className="cursor-pointer break-words py-2.5 text-xs font-semibold text-slate-600">{uiText('Customer / reference')}<span className="ml-2 font-normal text-slate-400">{customerNickname || draft.ticketReference || draft.ticketSeat || uiText('(optional)')}</span></summary>
           <label className="mt-3 block text-xs font-semibold text-slate-600" htmlFor="counter-name">{uiText("Customer name")}<span className="font-normal text-slate-400">{uiText("(optional)")}</span></label><input id="counter-name" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" disabled={isEditingDisabled} maxLength={80} onChange={(event) => { setCustomerNickname(event.target.value) }} placeholder={uiText("Guest")} value={customerNickname} />
           {hasSavedTableVisitTools&&<CounterIdentifierFields draft={draft} disabled={isEditingDisabled} onChange={(key,value)=>changeDraft((current)=>({...current,[key]:value}))}/>}
+          </details>
         </div>
-        <div aria-label={uiText("Selected dishes")} className="min-h-0 p-4 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
-          <div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-bold">{uiText("Order items")}</h3><span className="rounded-full bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700">{selectedTable ? `Table ${selectedTable.tableNumber}` : uiText("No table")}</span></div>
-          <div className="space-y-3">{cartItems.map((item) => <div className="rounded-xl border border-slate-100 p-2.5" key={item.id}>
-            <div className="flex items-start gap-2.5"><img alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" loading="lazy" onError={useImageFallback} src={getImageSource(item.imageUrl)} /><div className="min-w-0 flex-1"><strong className="block break-words text-xs leading-5">{item.quantity} × {item.name}</strong><span className="mt-1 block text-xs font-semibold text-orange-700">{formatCurrency(Number(item.price) * item.quantity)}</span><OptionSummary item={item} /></div></div><div className="mt-2 flex items-center gap-2"><button aria-label={uiText("Decrease {{v0}}", { v0: item.name })} className="h-7 w-7 rounded bg-slate-100 font-bold" disabled={isEditingDisabled} type="button" onClick={() => updateCart(item.id, item.quantity - 1)}>−</button><span className="text-xs">{item.quantity}</span><button aria-label={uiText("Increase {{v0}}", { v0: item.name })} className="h-7 w-7 rounded bg-orange-50 font-bold text-orange-700" disabled={isEditingDisabled || item.quantity >= 50} type="button" onClick={() => updateCart(item.id, item.quantity + 1)}>+</button><button className="ml-auto text-xs text-red-600" disabled={isEditingDisabled} type="button" onClick={() => updateCart(item.id, 0)}>{uiText("Remove")}</button></div>
-            <OrderTypeSelector compact value={item.orderType} onChange={(type) => changeType(item, type)} disabled={isEditingDisabled} />{item.quantity > 1 && <button className="mt-2 rounded border border-orange-200 p-2 text-xs font-bold text-orange-700" disabled={isEditingDisabled} type="button" onClick={() => changeType(item, item.orderType === "take_away" ? "dine_in" : "take_away", 1)}>{item.orderType === "take_away" ? uiText("Dine in 1 separately") : uiText("Pack 1 separately")}</button>}<input aria-label={uiText("Note for {{v0}}", { v0: item.name })} className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs" disabled={isEditingDisabled} maxLength={500} onChange={(event) => updateNotes(item.id, event.target.value)} placeholder={uiText("Kitchen note (optional)")} value={item.notes} />
-          </div>)}{Object.entries(cart).filter(([id, line]) => !menu.some((item) => item.id === (line.menuItemId ?? id))).map(([id, item]) => <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm" key={id}><strong>{item.name}{' '}{uiText("is no longer on the menu.")}</strong><button className="mt-2 block text-red-700 underline" disabled={isEditingDisabled} onClick={() => updateCart(id, 0)} type="button">{uiText("Remove item")}</button></div>)}</div>
-          {cartItems.length === 0 && <div className="py-6 text-center"><span aria-hidden="true" className="text-2xl text-slate-300">⌑</span><p className="mt-2 text-xs text-slate-500">{uiText("No dishes selected yet.")}</p></div>}
-          {hasInvalidItems && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{uiText("A dish is unavailable or invalid. Remove it, then review the order.")}</p>}
-          {submitError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{uiText(submitError)} <button className="mt-2 block font-bold underline" disabled={isLoading} onClick={() => void loadSetup()} type="button">{uiText("Refresh and review")}</button></p>}
+        <div aria-label={uiText("Selected dishes")} className="flex min-h-0 flex-col lg:flex-1">
+          <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-2"><h3 className="text-sm font-bold">{uiText("Order items")}<span className="ml-1.5 text-xs font-normal text-slate-400">({cartItems.reduce((sum, item) => sum + item.quantity, 0)})</span></h3><button type="button" aria-haspopup="dialog" onClick={() => setIsOrderExpanded(true)} className="min-h-10 rounded-lg px-2 text-xs font-semibold text-orange-700 hover:bg-orange-50">↗ {uiText('Expand order')}</button></div>
+          <div data-counter-order-scroll className="min-h-0 px-4 pb-4 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">{!isOrderExpanded && orderItemsContent}</div>
         </div>
-        <div className="shrink-0 border-t border-slate-100 bg-slate-50/50 p-4">
+        <div className="shrink-0 border-t border-slate-100 bg-slate-50/50 p-3">
           <dl className="space-y-2 text-xs text-slate-600"><div className="flex justify-between gap-2"><dt>{uiText("Subtotal")}</dt><dd className="tabular-nums">{subtotal === null ? '—' : formatCurrency(subtotal)}</dd></div>{Number(setup.settings?.serviceChargeRate) > 0 && <div className="flex justify-between gap-2"><dt>{uiText("Service charge (")}{setup.settings?.serviceChargeRate ?? 10}%)</dt><dd className="tabular-nums">{serviceCharge === null ? '—' : formatCurrency(serviceCharge)}</dd></div>}{Number(setup.settings?.sstRate) > 0 && <div className="flex justify-between gap-2"><dt>{uiText("SST (")}{setup.settings?.sstRate ?? 6}%)</dt><dd className="tabular-nums">{sst === null ? '—' : formatCurrency(sst)}</dd></div>}<div className="flex justify-between gap-2 border-t border-slate-200/70 pt-3 text-base font-bold text-slate-900"><dt>{uiText("Total")}</dt><dd className="text-orange-600 tabular-nums">{total === null ? '—' : formatCurrency(total)}</dd></div></dl>
-          <Button className="mt-4 w-full" disabled={isSubmitting || !actorId || draft.recoveryRequired || availabilityUpdates.size > 0 || (!hasPendingRequest && (isLoading || tableVisitChanged || !selectedTable || cartItems.length === 0 || hasInvalidItems || !Number.isFinite(total)))} type="submit">{isSubmitting ? uiText("Sending order...") : hasPendingRequest ? uiText("Retry previous order") : uiText("Send to kitchen")}</Button><p className="mt-2 text-[10px] leading-4 text-slate-400">{uiText("Menu availability and prices are checked again when you send the order.")}</p>
+          <Button className="mt-3 w-full" disabled={isSubmitting || !actorId || draft.recoveryRequired || availabilityUpdates.size > 0 || (!hasPendingRequest && (isLoading || tableVisitChanged || !selectedTable || cartItems.length === 0 || hasInvalidItems || !Number.isFinite(total)))} type="submit">{isSubmitting ? uiText("Sending order...") : hasPendingRequest ? uiText("Retry previous order") : uiText("Send to kitchen")}</Button><p className="sr-only">{uiText("Menu availability and prices are checked again when you send the order.")}</p>
         </div>
       </aside>
     </form>}
+    {isOrderExpanded && <PosDialog title={uiText('Order items')} onClose={() => setIsOrderExpanded(false)}><div className="max-h-[calc(100dvh-15rem)] overflow-y-auto overscroll-contain pr-1">{orderItemsContent}</div><div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-4"><strong>{uiText('Total')} {total === null ? '—' : formatCurrency(total)}</strong><Button variant="outline" onClick={() => setIsOrderExpanded(false)}>{uiText('Back to order')}</Button></div></PosDialog>}
     {optionItem && !isLocked && <CounterOptionsDialog item={optionItem} onClose={() => setOptionItem(null)} onAdd={addOptionLine} />}
     {isDiscarding && <ConfirmationDialog title={uiText('Discard damaged draft')} description={uiText('Check recent orders before discarding a damaged draft to avoid a duplicate order.')} confirmLabel="Discard damaged draft" onCancel={() => setIsDiscarding(false)} onConfirm={() => { discardDamagedDraft(); setIsDiscarding(false) }} />}
   </div>

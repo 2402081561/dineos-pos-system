@@ -6,6 +6,7 @@ import Button from '../../components/common/Button'
 import SectionHeading from '../../components/common/SectionHeading'
 import StatePanel from '../../components/common/StatePanel'
 import useTableSummary from '../../hooks/useTableSummary'
+import useCustomerSession from '../../hooks/useCustomerSession'
 import { formatCurrency } from '../../utils/currency'
 import { unpaidOrderItems } from '../../utils/customerOrder'
 
@@ -53,6 +54,8 @@ function TableSummarySkeleton() {
 
 function TableSummary() {
   const { t, statusLabel } = useCustomerLanguage()
+  const { session } = useCustomerSession()
+  const isSharedTable = session?.isSharedTable === true
   const { currentSessionId, error, grandTotal, hasSession, hasTableSession, isLoading, participants, paymentStatus, tableNumber } = useTableSummary()
   const [isOwnOrderExpanded, setIsOwnOrderExpanded] = useState(false)
 
@@ -78,14 +81,14 @@ function TableSummary() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-7">
-      <SectionHeading description={t("See who is dining with you and keep an eye on your table's unpaid total.")} eyebrow={t('Table {{number}}', { number: tableNumber })} title={t("Table summary")} />
+      <SectionHeading description={t(isSharedTable ? 'This is the whole table’s unpaid amount, not one person’s bill.' : "See who is dining with you and keep an eye on your table's unpaid total.")} eyebrow={t('Table {{number}}', { number: tableNumber })} title={t("Table summary")} />
       <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-orange-600 to-orange-500 p-6 text-white shadow-xl shadow-orange-600/20 sm:p-7">
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-orange-100">{t("Current unpaid table total")}</p>
         <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
           <p className="text-4xl font-extrabold tracking-tight sm:text-5xl">{formatCurrency(grandTotal)}</p>
-          <span className="rounded-full bg-white/15 px-3 py-1.5 text-sm font-bold backdrop-blur">
+          {!isSharedTable && <span className="rounded-full bg-white/15 px-3 py-1.5 text-sm font-bold backdrop-blur">
             {t('{{count}} diners', { count: participants.filter((participant) => !participant.isCounterOrder).length })}
-          </span>
+          </span>}
         </div>
         <p className="mt-4 text-sm text-orange-50">{t("Payment status:")}<strong>{t(paymentLabel(paymentStatus))}</strong>
           {paymentStatus === 'paid' ? t(" · Previous orders remain available in My Orders.") : ''}
@@ -94,8 +97,8 @@ function TableSummary() {
       <section>
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <p className="eyebrow">{t("Dining together")}</p>
-            <h2 className="mt-1 text-xl font-bold">{t("Participants")}</h2>
+            <p className="eyebrow">{t(isSharedTable ? 'Shared table orders' : 'Dining together')}</p>
+            <h2 className="mt-1 text-xl font-bold">{t(isSharedTable ? 'Unpaid order breakdown' : 'Participants')}</h2>
           </div>
           <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600">{t("Live updates")}</span>
         </div>
@@ -111,11 +114,11 @@ function TableSummary() {
                     <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-extrabold ${isOwnOrder ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{getInitials(participant.customerNickname)}</span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="truncate font-bold text-slate-900">{participant.customerNickname}</h3>
+                        <h3 className="truncate font-bold text-slate-900">{isSharedTable && isOwnOrder ? t('Shared table orders') : participant.customerNickname}</h3>
                         {Number(participant.takeAwayOrderCount) > 0 && <OrderTypeBadge orderType="take_away" />}
                         {Number(participant.dineInOrderCount) > 0 && <OrderTypeBadge orderType="dine_in" />}
                         {participant.isCounterOrder && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-600">{t("Counter order")}</span>}
-                        {isOwnOrder && <span className="rounded-full bg-orange-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-orange-700">{t("You")}</span>}
+                        {isOwnOrder && !isSharedTable && <span className="rounded-full bg-orange-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-orange-700">{t("You")}</span>}
                       </div>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClass(participant.status)}`}>{statusLabel(participant.status)}</span>
@@ -123,14 +126,14 @@ function TableSummary() {
                       </div>
                     </div>
                     <div className="ml-auto text-right">
-                      <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{t("Individual total")}</p>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{t(isSharedTable ? 'Unpaid amount' : 'Individual total')}</p>
                       <p className="mt-1 text-lg font-extrabold text-orange-600">{formatCurrency(participant.grandTotal)}</p>
                     </div>
                   </div>
                   {isOwnOrder && (
                     <div className="border-t border-orange-100 bg-orange-50/40 px-5 py-4">
                       <Button className="w-full sm:w-auto" onClick={() => setIsOwnOrderExpanded((isExpanded) => !isExpanded)} variant="outline">
-                        {isOwnOrderExpanded ? t("Hide my order details") : t("View my order details")}
+                        {isOwnOrderExpanded ? t(isSharedTable ? 'Hide order details' : 'Hide my order details') : t(isSharedTable ? 'View order details' : 'View my order details')}
                       </Button>
                       {isOwnOrderExpanded && (
                         <div className="mt-5 rounded-2xl bg-white p-4 shadow-sm">

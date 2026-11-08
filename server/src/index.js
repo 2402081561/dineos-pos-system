@@ -1,6 +1,9 @@
 import 'dotenv/config'
+import { registerTakeawayQrRoutes, pickupFieldsSql, pickupReference, addPickupIdentity } from './takeawayQr.js'
+import { orderPushConfig, registerOrderPushRoutes, createOrderPushWorker } from './orderPush.js'
 import { identifierInput, registerOrderIdentifierRoutes } from './orderIdentifiers.js'
 import { registerTableVisitMoveRoutes } from './tableVisitMoves.js'
+import { registerWalkInAssignmentRoutes } from './walkInAssignments.js'
 import { createDatabasePool, apiErrorHandler, logDatabaseError } from './databaseConnection.js'
 import { validateKitchenName } from './kitchenName.js'
 import { createHash } from 'node:crypto'
@@ -60,6 +63,9 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 const verifySupabaseAccessToken = createSupabaseTokenVerifier({ supabaseUrl })
 const requireAuthenticatedUser = createAuthenticatedUserMiddleware({ verifyToken: verifySupabaseAccessToken, pool })
+const pushConfig = orderPushConfig(process.env)
+const orderPushWorker = createOrderPushWorker({ pool, config: pushConfig })
+registerOrderPushRoutes(app, { pool, requireAuthenticatedUser, requireRole, config: pushConfig })
 const memberPublishableKey = String(process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY ?? '').trim()
 const emailConfig = memberEmailConfig(process.env)
 const memberEmailOtpEnabled = emailConfig.authEnabled
@@ -70,6 +76,8 @@ registerCustomerRequestHistory(app, { pool, requireCustomerSession })
 registerRefundRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 registerOrderIdentifierRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 registerTableVisitMoveRoutes(app, { pool, requireAuthenticatedUser, requireRole })
+registerWalkInAssignmentRoutes(app, { pool, requireAuthenticatedUser, requireRole })
+registerTakeawayQrRoutes(app, { pool })
 app.get('/api/v1/public/member-auth-config', (_request, response) => {
   response.set('Cache-Control', 'no-store').json({ emailOtpEnabled: memberEmailOtpEnabled, testMode: memberEmailOtpEnabled && emailConfig.mode === 'test' })
 })
@@ -84,13 +92,16 @@ async function requireCustomerSession(request, response, next) {
         customer_sessions.member_id AS "memberId",
         COALESCE(to_jsonb(customer_sessions)->'previous_table_session_ids','[]'::jsonb) AS "previousTableSessionIds",
         (table_sessions.shared_customer_session_id = customer_sessions.id OR COALESCE((to_jsonb(customer_sessions)->>'merged_shared_guest')::boolean,false)) AS "isSharedTable",
-        restaurant_tables.table_number AS "tableNumber"
+        restaurant_tables.table_number AS "tableNumber", table_sessions.status AS "visitStatus",
+        (to_jsonb(customer_sessions)->>'takeaway_join_hash' IS NOT NULL) AS "isTakeawayQr"
       FROM customer_sessions
       JOIN table_sessions ON table_sessions.id = customer_sessions.table_session_id
-      JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+      LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       WHERE customer_sessions.access_token = $1
         AND customer_sessions.left_at IS NULL
-        AND table_sessions.status = 'active'
+        AND ((table_sessions.status = 'active' AND restaurant_tables.id IS NOT NULL)
+          OR ((to_jsonb(customer_sessions)->>'takeaway_join_hash') IS NOT NULL
+            AND (to_jsonb(customer_sessions)->>'takeaway_expires_at')::timestamptz>now()))
     `, [token])
     if (!rows[0]) return response.status(401).json({ error: 'This customer session is no longer active.' })
     request.customerSession = rows[0]
@@ -254,12 +265,19 @@ registerOrderChangeRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 registerOrderDetailsRoute(app, { pool, requireAuthenticatedUser, requireRole })
 registerHandoffRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 
-async function insertPreparedOrder(client, { tableSessionId, customerSessionId, memberId = null, cartItems, requestId, publicOrder = false, settingsRevision, orderType }) {
+async function insertPreparedOrder(client, { tableSessionId, customerSessionId, memberId = null, cartItems, requestId, publicOrder = false, settingsRevision, orderType, takeawayReference }) {
   cartItems = resolveItemOrderTypes(cartItems, orderType)
   orderType = summarizeOrderType(cartItems)
   const settings = await loadStoreSettings(client)
   if (settingsRevision !== undefined && settingsRevision !== settings.revision) throw new PosValidationError('Shop settings changed. Refresh the page and review the order total.', 409)
   if (publicOrder && !settings.isAcceptingOrders) throw new PosValidationError(settings.orderingMessage, 409)
+  if (takeawayReference !== undefined) {
+    if (!settings.config.takeawayQrEnabled) throw new PosValidationError('Take-away QR ordering is not enabled yet.',409)
+    if (orderType !== 'take_away') throw new PosValidationError('This QR code accepts take-away items only.')
+    pickupReference(takeawayReference)
+    const count=await client.query("SELECT count(*)::int AS n FROM orders WHERE customer_session_id=$1 AND created_at>now()-interval '1 minute'",[customerSessionId])
+    if(count.rows[0].n>=5) throw new PosValidationError('Please wait before submitting another take-away order.',429)
+  }
   const menu = await client.query('SELECT menu_items.id, menu_items.name, menu_items.price, menu_items.option_groups AS "optionGroups", menu_items.is_available AS "isAvailable", (categories.id IS NULL OR categories.is_enabled) AS "categoryEnabled" FROM menu_items LEFT JOIN categories ON categories.id = menu_items.category_id WHERE menu_items.id = ANY($1::uuid[]) FOR SHARE OF menu_items', [cartItems.map((item) => item.menuItemId)])
   const bill = buildCounterOrder(cartItems, menu.rows, settings.config)
   const addition = await client.query("SELECT EXISTS(SELECT 1 FROM orders WHERE table_session_id = $1 AND status <> 'cancelled') AS present", [tableSessionId])
@@ -268,6 +286,7 @@ async function insertPreparedOrder(client, { tableSessionId, customerSessionId, 
     RETURNING id, order_type AS "orderType", table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt", is_addition AS "isAddition"`,
   [tableSessionId, customerSessionId, memberId, bill.subtotal, bill.serviceCharge, bill.sst, bill.grandTotal, requestId, bill.serviceChargeRate, bill.sstRate, addition.rows[0].present, orderType])
   for (const item of bill.items) await client.query('INSERT INTO order_items (order_id, menu_item_id, item_name, unit_price, quantity, notes, selections, option_snapshot, order_type) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)', [created.rows[0].id, item.id, item.name, item.unitPrice, item.quantity, item.notes, JSON.stringify(item.selections), JSON.stringify(item.optionSnapshot), item.orderType])
+  if(takeawayReference !== undefined) Object.assign(created.rows[0],await addPickupIdentity(client,created.rows[0].id,takeawayReference))
   return created
 }
 
@@ -350,9 +369,13 @@ app.patch('/api/v1/public/customer-session', requireCustomerSession, async (requ
   if (request.customerSession.isSharedTable) return response.status(409).json({ error: 'Names are not stored for a shared table order.' })
   const nickname = String(request.body?.customerNickname ?? '').trim().slice(0, 80)
   if (!nickname) return response.status(400).json({ error: 'Customer name must contain 1 to 80 characters.' })
+  if (request.customerSession.isTakeawayQr) {
+    try { pickupReference(request.body?.customerNickname) } catch(error) {return response.status(400).json({error:error.message})}
+    if(request.customerSession.visitStatus!=='active') return response.status(409).json({error:'This take-away visit is complete. Start a new visit to order again.'})
+  }
   try {
     const { rows } = await pool.query('UPDATE customer_sessions SET nickname = $1 WHERE id = $2 RETURNING access_token AS "sessionId", table_session_id AS "tableSessionId", nickname AS "customerNickname"', [nickname, request.customerSession.id])
-    response.status(200).json({ session: { ...rows[0], tableNumber: request.customerSession.tableNumber } })
+    response.status(200).json({ session: { ...request.customerSession, ...rows[0], tableNumber: request.customerSession.tableNumber } })
   } catch (error) { next(error) }
 })
 
@@ -425,21 +448,21 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const existing = await client.query('SELECT id, order_type AS "orderType", table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
+    const existing = await client.query(`SELECT id, order_type AS "orderType", table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt",${pickupFieldsSql} FROM orders WHERE customer_session_id = $1 AND client_request_id = $2`, [request.customerSession.id, requestId])
     if (existing.rows[0]) {
       await client.query('COMMIT')
       return response.status(200).json({ order: existing.rows[0], duplicate: true })
     }
-    const session = await client.query("SELECT customer_sessions.id,customer_sessions.table_session_id FROM customer_sessions JOIN table_sessions ON table_sessions.id = customer_sessions.table_session_id WHERE customer_sessions.id = $1 AND customer_sessions.left_at IS NULL AND table_sessions.status = 'active' FOR UPDATE OF customer_sessions, table_sessions", [request.customerSession.id])
+    const session = await client.query("SELECT customer_sessions.id,customer_sessions.nickname,customer_sessions.table_session_id FROM customer_sessions JOIN table_sessions ON table_sessions.id = customer_sessions.table_session_id WHERE customer_sessions.id = $1 AND customer_sessions.left_at IS NULL AND table_sessions.status = 'active' FOR UPDATE OF customer_sessions, table_sessions", [request.customerSession.id])
     if (!session.rows[0]) throw new Error('Your table session is no longer active.')
     if (session.rows[0].table_session_id && session.rows[0].table_session_id !== request.customerSession.tableSessionId) throw new PosValidationError('Your table visit changed. Refresh before submitting the same order.',409)
-    const created = await insertPreparedOrder(client, { tableSessionId: request.customerSession.tableSessionId, customerSessionId: request.customerSession.id, memberId: request.customerSession.isSharedTable ? null : request.customerSession.memberId, cartItems, requestId, publicOrder: true, settingsRevision: request.body?.settingsRevision, orderType: request.body?.orderType })
+    const created = await insertPreparedOrder(client, { tableSessionId: request.customerSession.tableSessionId, customerSessionId: request.customerSession.id, memberId: request.customerSession.isSharedTable ? null : request.customerSession.memberId, cartItems, requestId, publicOrder: true, settingsRevision: request.body?.settingsRevision, orderType: request.body?.orderType, ...(request.customerSession.isTakeawayQr ? { takeawayReference: session.rows[0].nickname } : {}) })
     await client.query('COMMIT')
     return response.status(201).json({ order: created.rows[0], duplicate: false })
   } catch (error) {
     await client.query('ROLLBACK')
     if (error.code === '23505') {
-      const existing = await pool.query('SELECT id, order_type AS "orderType", table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt" FROM orders WHERE customer_session_id = $1 AND client_request_id = $2', [request.customerSession.id, requestId])
+      const existing = await pool.query(`SELECT id, order_type AS "orderType", table_order_number AS "tableOrderNumber", status, payment_status AS "paymentStatus", grand_total AS "grandTotal", created_at AS "createdAt",${pickupFieldsSql} FROM orders WHERE customer_session_id = $1 AND client_request_id = $2`, [request.customerSession.id, requestId])
       if (existing.rows[0]) return response.status(200).json({ order: existing.rows[0], duplicate: true })
     }
     if (error instanceof PosValidationError || error instanceof CounterOrderValidationError) return response.status(error.status).json({ error: error.message })
@@ -451,7 +474,7 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
 app.get('/api/v1/public/orders', requireCustomerSession, async (request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.customer_session_id AS "customerSessionId", customer_sessions.created_by_cashier AS "isCounterOrder",
+      SELECT orders.id, ${pickupFieldsSql}, orders.customer_session_id AS "customerSessionId", customer_sessions.created_by_cashier AS "isCounterOrder",
         orders.customer_session_id = $1::uuid AS "isCurrentCustomer",
         orders.order_type AS "orderType", orders.table_order_number AS "tableOrderNumber", restaurant_tables.table_number AS "tableNumber", orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus",
         orders.subtotal, orders.discount_amount AS "discountAmount",
@@ -461,7 +484,7 @@ app.get('/api/v1/public/orders', requireCustomerSession, async (request, respons
       FROM orders
         JOIN customer_sessions ON customer_sessions.id = orders.customer_session_id
         JOIN table_sessions ON table_sessions.id = orders.table_session_id
-        JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+        LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
         LEFT JOIN order_items ON order_items.order_id = orders.id
         LEFT JOIN menu_items ON menu_items.id = order_items.menu_item_id
       WHERE orders.table_session_id = $2
@@ -539,17 +562,17 @@ app.get('/api/v1/public/table-summary', requireCustomerSession, async (request, 
 app.get('/api/v1/kitchen/orders', requireAuthenticatedUser, requireRole('admin', 'kitchen'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.version, orders.is_addition AS "isAddition", orders.revision_note AS "revisionNote", orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
+      SELECT orders.id, ${pickupFieldsSql}, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.version, orders.is_addition AS "isAddition", orders.revision_note AS "revisionNote", orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
         COALESCE(to_jsonb(orders)->>'ticket_seat','') AS "ticketSeat", COALESCE(to_jsonb(orders)->>'ticket_reference','') AS "ticketReference",
-        restaurant_tables.table_number AS "tableNumber", customer_sessions.nickname AS "customerNickname",
+        restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn", customer_sessions.nickname AS "customerNickname",
         COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'kitchenName', to_jsonb(menu_items)->>'kitchen_name', 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes, 'imageUrl', menu_items.image_url) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
       FROM orders
       JOIN table_sessions ON table_sessions.id = orders.table_session_id
-      JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+      LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       JOIN customer_sessions ON customer_sessions.id = orders.customer_session_id
       LEFT JOIN order_items ON order_items.order_id = orders.id
       LEFT JOIN menu_items ON menu_items.id = order_items.menu_item_id
-      WHERE orders.status IN ('received', 'preparing', 'ready')
+      WHERE orders.status IN ('received', 'preparing', 'ready') AND table_sessions.status = 'active'
       GROUP BY orders.id, restaurant_tables.table_number, customer_sessions.nickname
       ORDER BY orders.created_at ASC
     `)
@@ -586,20 +609,20 @@ app.post('/api/v1/cashier/payments', requireAuthenticatedUser, requireRole('admi
   try {
     await client.query('BEGIN')
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [requestId])
-    const previous = await client.query(`SELECT payments.*, restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber" FROM payments JOIN table_sessions ON table_sessions.id = payments.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id WHERE request_id = $1`, [requestId])
+    const previous = await client.query(`SELECT payments.*, restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn" FROM payments JOIN table_sessions ON table_sessions.id = payments.table_session_id LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id WHERE request_id = $1`, [requestId])
     if (previous.rows[0]) {
       const saved = previous.rows[0]
       if (saved.request_fingerprint !== fingerprint || saved.cashier_id !== request.user.id) throw new PosValidationError('This payment request was already used for a different bill.', 409)
       await client.query('COMMIT')
-      return response.json({ payment: { receiptNumber: saved.receipt_number, paidAt: saved.paid_at, amount: saved.amount, cashReceived: saved.cash_received, changeAmount: saved.change_amount, tableId: saved.tableId, tableNumber: saved.tableNumber, tableSessionId: saved.table_session_id } })
+      return response.json({ payment: { receiptNumber: saved.receipt_number, paidAt: saved.paid_at, amount: saved.amount, cashReceived: saved.cash_received, changeAmount: saved.change_amount, tableId: saved.tableId, tableNumber: saved.tableNumber, isWalkIn: saved.isWalkIn, tableSessionId: saved.table_session_id } })
     }
     const { rows: orders } = await client.query(`
-      SELECT orders.id, orders.order_type AS "orderType", orders.table_session_id AS "tableSessionId", orders.customer_session_id AS "sessionId", (SELECT nickname FROM customer_sessions WHERE id = orders.customer_session_id) AS "customerNickname", orders.member_id AS "memberId", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber",
+      SELECT orders.id, orders.order_type AS "orderType", orders.table_session_id AS "tableSessionId", orders.customer_session_id AS "sessionId", (SELECT nickname FROM customer_sessions WHERE id = orders.customer_session_id) AS "customerNickname", orders.member_id AS "memberId", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn",
         orders.status, orders.version, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.service_charge_rate AS "serviceChargeRate", orders.sst_rate AS "sstRate",
         COALESCE((SELECT sum(order_items.unit_price * order_items.quantity) FROM order_items WHERE order_items.order_id = orders.id), 0) AS subtotal
       FROM orders
       JOIN table_sessions ON table_sessions.id = orders.table_session_id
-      JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+      LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       WHERE orders.id = ANY($1::uuid[])
       ORDER BY orders.id
       FOR UPDATE OF orders
@@ -658,7 +681,7 @@ app.post('/api/v1/cashier/payments', requireAuthenticatedUser, requireRole('admi
     }
     await client.query('COMMIT')
     void logAuditEvent({ action: 'COMPLETE_PAYMENT', actorId: request.user.id, targetType: 'receipt', targetId: receiptNumber, details: { tableNumber: orders[0].tableNumber, paymentMethod, amount, ...(paymentMethod === 'Cash' ? { cashReceived, changeAmount } : {}), ...(loyalty ? { pointsEarned: loyalty.points } : {}) } })
-    return response.status(201).json({ payment: { ...payment.rows[0], tableSessionId, tableId: orders[0].tableId, tableNumber: orders[0].tableNumber, paymentMethod, orderIds: finalOrders.map((order) => order.id), loyalty } })
+    return response.status(201).json({ payment: { ...payment.rows[0], tableSessionId, tableId: orders[0].tableId, tableNumber: orders[0].tableNumber, isWalkIn: orders[0].isWalkIn, paymentMethod, orderIds: finalOrders.map((order) => order.id), loyalty } })
   } catch (error) {
     await client.query('ROLLBACK')
     if (error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
@@ -673,12 +696,12 @@ app.get('/api/v1/cashier/receipts/:receiptNumber', requireAuthenticatedUser, req
       SELECT payments.receipt_number AS "receiptNumber", payments.payment_method AS "paymentMethod", payments.amount,
         payments.cash_received AS "cashReceived", payments.change_amount AS "changeAmount",
         payments.restaurant_name AS "restaurantName", payments.shop_snapshot AS "shopSnapshot",
-        payments.paid_at AS "paidAt", restaurant_tables.table_number AS "tableNumber",
+        payments.paid_at AS "paidAt", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn",
         users.display_name AS "cashierName",
         COALESCE(payments.order_snapshot, jsonb_agg(jsonb_build_object('id', orders.id, 'orderType', orders.order_type, 'subtotal', orders.subtotal, 'discountAmount', orders.discount_amount, 'serviceCharge', orders.service_charge, 'sst', orders.sst, 'grandTotal', orders.grand_total, 'customerNickname', customer_sessions.nickname, 'items', COALESCE(items.items, '[]'::jsonb)) ORDER BY orders.created_at) FILTER (WHERE orders.id IS NOT NULL), '[]'::jsonb) AS orders
       FROM payments
       JOIN table_sessions ON table_sessions.id = payments.table_session_id
-      JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+      LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       LEFT JOIN users ON users.id = payments.cashier_id
       LEFT JOIN orders ON orders.receipt_number = payments.receipt_number
       LEFT JOIN customer_sessions ON customer_sessions.id = orders.customer_session_id
@@ -693,7 +716,7 @@ app.get('/api/v1/cashier/receipts/:receiptNumber', requireAuthenticatedUser, req
 
 app.post('/api/v1/cashier/receipts/:receiptNumber/reprint', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (request, response, next) => {
   try {
-    const { rows } = await pool.query(`SELECT payments.receipt_number AS "receiptNumber", restaurant_tables.table_number AS "tableNumber" FROM payments JOIN table_sessions ON table_sessions.id = payments.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id WHERE payments.receipt_number = $1 AND ${paidReceiptCondition}`, [String(request.params.receiptNumber ?? '')])
+    const { rows } = await pool.query(`SELECT payments.receipt_number AS "receiptNumber", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn" FROM payments JOIN table_sessions ON table_sessions.id = payments.table_session_id LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id WHERE payments.receipt_number = $1 AND ${paidReceiptCondition}`, [String(request.params.receiptNumber ?? '')])
     if (!rows[0]) return response.status(404).json({ error: 'Receipt not found.' })
     void logAuditEvent({ action: 'REPRINT_RECEIPT', actorId: request.user.id, targetType: 'receipt', targetId: rows[0].receiptNumber, details: { tableNumber: rows[0].tableNumber } })
     return response.status(204).end()
@@ -745,7 +768,7 @@ app.post('/api/v1/public/service-requests', requireCustomerSession, async (reque
 
 app.get('/api/v1/staff/service-requests', requireAuthenticatedUser, requireRole('admin', 'staff'), async (_request, response, next) => {
   try {
-    const { rows } = await pool.query(`SELECT service_requests.id, service_requests.request_type AS "requestType", service_requests.status, service_requests.details, service_requests.created_at AS "createdAt", restaurant_tables.table_number AS "tableNumber", customer_sessions.nickname AS "customerNickname" FROM service_requests JOIN table_sessions ON table_sessions.id = service_requests.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id LEFT JOIN customer_sessions ON customer_sessions.id = service_requests.customer_session_id WHERE service_requests.status = 'pending' ORDER BY service_requests.created_at ASC`)
+    const { rows } = await pool.query(`SELECT service_requests.id, service_requests.request_type AS "requestType", service_requests.status, service_requests.details, service_requests.created_at AS "createdAt", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn", customer_sessions.nickname AS "customerNickname" FROM service_requests JOIN table_sessions ON table_sessions.id = service_requests.table_session_id LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id LEFT JOIN customer_sessions ON customer_sessions.id = service_requests.customer_session_id WHERE service_requests.status = 'pending' ORDER BY service_requests.created_at ASC`)
     response.status(200).json({ requests: rows })
   } catch (error) { next(error) }
 })
@@ -762,7 +785,7 @@ app.patch('/api/v1/staff/service-requests/:requestId/complete', requireAuthentic
 app.get('/api/v1/staff/tables', requireAuthenticatedUser, requireRole('admin', 'staff'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT restaurant_tables.id, restaurant_tables.table_number AS "tableNumber", restaurant_tables.capacity,
+      SELECT restaurant_tables.id, restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn", restaurant_tables.capacity,
         restaurant_tables.is_enabled AS "isEnabled", active_sessions.id AS "tableSessionId",
         COALESCE(participants.count, 0)::int AS "participantCount",
         COALESCE(order_data.count, 0)::int AS "orderCount",
@@ -791,14 +814,14 @@ app.get('/api/v1/staff/tables', requireAuthenticatedUser, requireRole('admin', '
 app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.version, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.table_session_id AS "tableSessionId", orders.member_id AS "memberId", orders.status,
+      SELECT orders.id, ${pickupFieldsSql}, orders.version, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.table_session_id AS "tableSessionId", orders.member_id AS "memberId", orders.status,
         orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", (orders.subtotal - orders.paid_subtotal) AS subtotal, orders.discount_amount AS "discountAmount",
         orders.service_charge_rate AS "serviceChargeRate", orders.sst_rate AS "sstRate", (orders.service_charge - orders.paid_service_charge) AS "serviceCharge", (orders.sst - orders.paid_sst) AS sst, (orders.grand_total - orders.paid_amount) AS "grandTotal",
-        orders.created_at AS "createdAt", orders.updated_at AS "updatedAt", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber",
+        orders.created_at AS "createdAt", orders.updated_at AS "updatedAt", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn",
         customer_sessions.id AS "sessionId", customer_sessions.nickname AS "customerNickname",
         COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
-      JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+      LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       JOIN customer_sessions ON customer_sessions.id = orders.customer_session_id
       LEFT JOIN order_items ON order_items.order_id = orders.id
       WHERE orders.status <> 'cancelled' AND orders.payment_status = 'pending'
@@ -806,20 +829,20 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
       ORDER BY orders.updated_at DESC
     `)
     const { rows: clearableTables } = await pool.query(`
-      SELECT restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber", table_sessions.id AS "tableSessionId"
+      SELECT restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn", table_sessions.id AS "tableSessionId"
       FROM restaurant_tables
       JOIN table_sessions ON table_sessions.table_id = restaurant_tables.id AND table_sessions.status = 'active'
       WHERE NOT EXISTS (
           SELECT 1 FROM orders
           WHERE orders.table_session_id = table_sessions.id
-            AND (orders.payment_status <> 'paid' OR orders.status <> 'served')
+            AND (orders.payment_status <> 'paid' OR (orders.status <> 'served' AND NOT (orders.status = 'ready' AND COALESCE((SELECT (config->>'requireHandoffConfirmation')::boolean FROM shop_settings WHERE id = 1), true) = false)))
             AND orders.status <> 'cancelled'
         )
       ORDER BY restaurant_tables.table_number ASC
     `)
     const { rows: [floorPlan] } = await pool.query('SELECT markers, revision FROM floor_plan_settings WHERE id = 1')
     const { rows: floorTables } = await pool.query(`
-      SELECT restaurant_tables.id, restaurant_tables.table_number AS "tableNumber", restaurant_tables.capacity,
+      SELECT restaurant_tables.id, restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn", restaurant_tables.capacity,
         restaurant_tables.floor_x AS "floorX", restaurant_tables.floor_y AS "floorY", restaurant_tables.floor_zone AS "floorZone", restaurant_tables.floor_style AS "floorStyle", restaurant_tables.floor_point AS "floorPoint",
         restaurant_tables.is_enabled AS "isEnabled", active_sessions.id AS "tableSessionId",
         COALESCE(participants.count, 0)::int AS "participantCount",
@@ -845,8 +868,8 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
           jsonb_build_object('received', count(*) FILTER (WHERE status = 'received'),
             'preparing', count(*) FILTER (WHERE status = 'preparing'), 'ready', count(*) FILTER (WHERE status = 'ready'),
             'served', count(*) FILTER (WHERE status = 'served'), 'cancelled', count(*) FILTER (WHERE status = 'cancelled')) AS status_counts,
-          bool_and(status = 'served') FILTER (WHERE status <> 'cancelled' AND payment_status <> 'paid') AS all_served,
-          bool_and((payment_status = 'paid' AND status = 'served') OR status = 'cancelled') AS ready_to_clear
+          bool_and(status = 'served' OR (status = 'ready' AND COALESCE((SELECT (config->>'requireHandoffConfirmation')::boolean FROM shop_settings WHERE id = 1), true) = false)) FILTER (WHERE status <> 'cancelled' AND payment_status <> 'paid') AS all_served,
+          bool_and((payment_status = 'paid' AND (status = 'served' OR (status = 'ready' AND COALESCE((SELECT (config->>'requireHandoffConfirmation')::boolean FROM shop_settings WHERE id = 1), true) = false))) OR status = 'cancelled') AS ready_to_clear
         FROM orders WHERE table_session_id = active_sessions.id
       ) order_data ON true
       ORDER BY restaurant_tables.table_number ASC
@@ -862,11 +885,11 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
         AND paid_at < ((date_trunc('day', now() AT TIME ZONE 'Asia/Kuching') + interval '1 day') AT TIME ZONE 'Asia/Kuching')
     `)
     const { rows: recentOrders } = await pool.query(`
-      SELECT orders.id, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.status,
+      SELECT orders.id, ${pickupFieldsSql}, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.status,
         orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total::double precision AS "grandTotal",
-        orders.created_at AS "createdAt", restaurant_tables.id AS "tableId", orders.table_session_id AS "tableSessionId", restaurant_tables.table_number AS "tableNumber"
+        orders.created_at AS "createdAt", restaurant_tables.id AS "tableId", orders.table_session_id AS "tableSessionId", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn"
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
-      JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+      LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       ORDER BY orders.created_at DESC, orders.id DESC LIMIT 8
     `)
     const { rows: billRequests } = await pool.query(`SELECT service_requests.id, table_sessions.table_id AS "tableId", service_requests.details FROM service_requests JOIN table_sessions ON table_sessions.id = service_requests.table_session_id WHERE request_type = 'requestBill' AND service_requests.status = 'pending' AND table_sessions.status = 'active'`)
@@ -876,8 +899,8 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
 
 app.get('/api/v1/cashier/order-setup', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (_request, response, next) => {
   try {
-    const [tables, menu, settings] = await Promise.all([
-      pool.query(`SELECT restaurant_tables.id, restaurant_tables.table_number AS "tableNumber",
+    const [tables, menu, settings, walkIn] = await Promise.all([
+      pool.query(`SELECT restaurant_tables.id, restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn",
         active_sessions.id AS "tableSessionId"
         FROM restaurant_tables
         LEFT JOIN LATERAL (
@@ -892,17 +915,19 @@ app.get('/api/v1/cashier/order-setup', requireAuthenticatedUser, requireRole('ad
         WHERE categories.id IS NULL OR categories.is_enabled = true
         ORDER BY categories.sort_order NULLS LAST, menu_items.name`),
       loadStoreSettings(pool),
+      pool.query('SELECT NOT attnotnull AS enabled FROM pg_attribute WHERE attrelid = \'public.table_sessions\'::regclass AND attname = \'table_id\''),
     ])
-    response.status(200).json({ tables: tables.rows, items: menu.rows, settings: settings.config, settingsRevision: settings.revision })
+    response.status(200).json({ tables: tables.rows, items: menu.rows, settings: settings.config, settingsRevision: settings.revision, walkInEnabled: walkIn.rows[0]?.enabled === true })
   } catch (error) { next(error) }
 })
 
 app.post('/api/v1/cashier/orders', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (request, response, next) => {
   const requestId = String(request.get('idempotency-key') ?? '').trim()
-  const tableId = String(request.body?.tableId ?? '').trim()
+  const isWalkIn = request.body?.isWalkIn === true
+  const tableId = isWalkIn ? null : String(request.body?.tableId ?? '').trim()
   const expectedSessionId = request.body?.expectedTableSessionId
   const nickname = String(request.body?.customerNickname ?? '').trim() || 'Guest'
-  if (!uuid.test(requestId) || !uuid.test(tableId) || !Object.hasOwn(request.body ?? {}, 'expectedTableSessionId') || (expectedSessionId !== null && !uuid.test(String(expectedSessionId)))) {
+  if (!uuid.test(requestId) || (!isWalkIn && !uuid.test(tableId)) || (isWalkIn && (request.body?.tableId != null || expectedSessionId !== null)) || !Object.hasOwn(request.body ?? {}, 'expectedTableSessionId') || (expectedSessionId !== null && !uuid.test(String(expectedSessionId)))) {
     return response.status(400).json({ error: 'Select a table and refresh the order before trying again.' })
   }
   if (nickname.length > 80) return response.status(400).json({ error: 'Customer name must be 80 characters or fewer.' })
@@ -912,9 +937,12 @@ app.post('/api/v1/cashier/orders', requireAuthenticatedUser, requireRole('admin'
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    // Serialize retries before creating a no-table visit: no orphan visits or
+    // duplicate bills if the initial response is lost.
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [requestId])
     const existingOrder = await client.query(`SELECT orders.id, orders.order_type AS "orderType", orders.table_order_number AS "tableOrderNumber",
       orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal",
-      orders.created_at AS "createdAt", COALESCE((to_jsonb(orders)->>'counter_request_table_id')::uuid,table_sessions.table_id) AS "tableId"
+      orders.created_at AS "createdAt", orders.table_session_id AS "tableSessionId", orders.order_number AS "orderNumber", table_sessions.table_id IS NULL AS "isWalkIn", CASE WHEN COALESCE((to_jsonb(orders)->>'counter_request_walk_in')::boolean,false) THEN NULL ELSE COALESCE((to_jsonb(orders)->>'counter_request_table_id')::uuid,table_sessions.table_id) END AS "tableId"
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
       WHERE orders.client_request_id = $1`, [requestId])
     if (existingOrder.rows[0]) {
@@ -922,12 +950,12 @@ app.post('/api/v1/cashier/orders', requireAuthenticatedUser, requireRole('admin'
       if (existingOrder.rows[0].tableId !== tableId) return response.status(409).json({ error: 'This request was already used for a different table.' })
       return response.status(200).json({ order: existingOrder.rows[0], duplicate: true })
     }
-    const table = await client.query('SELECT id FROM restaurant_tables WHERE id = $1 AND is_enabled = true FOR UPDATE', [tableId])
+    const table = isWalkIn ? { rows: [{ id: null }] } : await client.query('SELECT id FROM restaurant_tables WHERE id = $1 AND is_enabled = true FOR UPDATE', [tableId])
     if (!table.rows[0]) {
       await client.query('ROLLBACK')
       return response.status(409).json({ error: 'This table is no longer available. Refresh and choose a table.' })
     }
-    const activeSession = await client.query("SELECT id FROM table_sessions WHERE table_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1 FOR UPDATE", [tableId])
+    const activeSession = isWalkIn ? { rows: [] } : await client.query("SELECT id FROM table_sessions WHERE table_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1 FOR UPDATE", [tableId])
     if ((activeSession.rows[0]?.id ?? null) !== expectedSessionId) {
       await client.query('ROLLBACK')
       return response.status(409).json({ error: 'This table visit changed. Refresh and review the order.' })
@@ -938,17 +966,19 @@ app.post('/api/v1/cashier/orders', requireAuthenticatedUser, requireRole('admin'
     // a guest participant or exposing an ordering token to another customer.
     const customerSession = await client.query('INSERT INTO customer_sessions (table_session_id, nickname, left_at, created_by_cashier) VALUES ($1, $2, now(), true) RETURNING id', [tableSessionId, nickname])
     const created = await insertPreparedOrder(client, { tableSessionId, customerSessionId: customerSession.rows[0].id, cartItems, requestId, settingsRevision: request.body?.settingsRevision, orderType: request.body?.orderType })
+    if (isWalkIn && (await client.query("SELECT to_regclass('public.walk_in_table_assignments') AS ready")).rows[0]?.ready) await client.query('UPDATE orders SET counter_request_walk_in=true WHERE id=$1', [created.rows[0].id])
     if (identifiers.ticketSeat || identifiers.ticketReference) await client.query('UPDATE orders SET ticket_seat=$1,ticket_reference=$2,counter_request_table_id=$3 WHERE id=$4',[identifiers.ticketSeat,identifiers.ticketReference,tableId,created.rows[0].id])
     await client.query('COMMIT')
     void logAuditEvent({ action: 'CREATE_COUNTER_ORDER', actorId: request.user.id, targetType: 'order', targetId: created.rows[0].id, details: { tableId, orderType: created.rows[0].orderType, itemCount: cartItems.length, isAddition: created.rows[0].isAddition } })
-    return response.status(201).json({ order: created.rows[0], duplicate: false })
+    return response.status(201).json({ order: { ...created.rows[0], tableId, tableSessionId, isWalkIn }, duplicate: false })
   } catch (error) {
     await client.query('ROLLBACK')
     if (error instanceof CounterOrderValidationError || error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
+    if (isWalkIn && error.code === '23502' && error.table === 'table_sessions' && error.column === 'table_id') return response.status(409).json({ error: 'Walk-in ordering is not enabled on this database yet.' })
     if (error.code === '23505') {
       const { rows } = await pool.query(`SELECT orders.id, orders.order_type AS "orderType", orders.table_order_number AS "tableOrderNumber", orders.status,
         orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt",
-        COALESCE((to_jsonb(orders)->>'counter_request_table_id')::uuid,table_sessions.table_id) AS "tableId" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
+        orders.table_session_id AS "tableSessionId", table_sessions.table_id IS NULL AS "isWalkIn", CASE WHEN COALESCE((to_jsonb(orders)->>'counter_request_walk_in')::boolean,false) THEN NULL ELSE COALESCE((to_jsonb(orders)->>'counter_request_table_id')::uuid,table_sessions.table_id) END AS "tableId" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
         WHERE orders.client_request_id = $1`, [requestId])
       if (rows[0]?.tableId === tableId) {
         return response.status(200).json({ order: rows[0], duplicate: true })
@@ -993,7 +1023,7 @@ app.patch('/api/v1/cashier/table-layout', requireAuthenticatedUser, requireRole(
 
 app.get('/api/v1/cashier/receipts', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (_request, response, next) => {
   try {
-    const { rows } = await pool.query(`SELECT payments.receipt_number AS "receiptNumber", payments.payment_method AS "paymentMethod", payments.amount, payments.paid_at AS "paidAt", restaurant_tables.table_number AS "tableNumber" FROM payments JOIN table_sessions ON table_sessions.id = payments.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id WHERE ${paidReceiptCondition} ORDER BY payments.paid_at DESC LIMIT 100`)
+    const { rows } = await pool.query(`SELECT payments.receipt_number AS "receiptNumber", payments.payment_method AS "paymentMethod", payments.amount, payments.paid_at AS "paidAt", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn" FROM payments JOIN table_sessions ON table_sessions.id = payments.table_session_id LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id WHERE ${paidReceiptCondition} ORDER BY payments.paid_at DESC LIMIT 100`)
     response.status(200).json({ receipts: rows })
   } catch (error) { next(error) }
 })
@@ -1002,7 +1032,7 @@ app.get('/api/v1/cashier/settlement', requireAuthenticatedUser, requireRole('adm
   const date = businessDate()
   try {
     const [paid, todayOrders, closings] = await Promise.all([
-      pool.query("SELECT payments.receipt_number AS \"receiptNumber\", payments.payment_method AS \"paymentMethod\", payments.amount, payments.paid_at AS \"paidAt\", restaurant_tables.table_number AS \"tableNumber\" FROM payments JOIN table_sessions ON table_sessions.id = payments.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id WHERE (payments.paid_at AT TIME ZONE 'Asia/Kuching')::date = $1::date ORDER BY payments.paid_at DESC", [date]),
+      pool.query("SELECT payments.receipt_number AS \"receiptNumber\", payments.payment_method AS \"paymentMethod\", payments.amount, payments.paid_at AS \"paidAt\", restaurant_tables.table_number AS \"tableNumber\", restaurant_tables.table_number IS NULL AS \"isWalkIn\" FROM payments JOIN table_sessions ON table_sessions.id = payments.table_session_id LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id WHERE (payments.paid_at AT TIME ZONE 'Asia/Kuching')::date = $1::date ORDER BY payments.paid_at DESC", [date]),
       pool.query("SELECT id, status, payment_status AS \"paymentStatus\", grand_total AS \"grandTotal\", created_at AS \"createdAt\" FROM orders WHERE (created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date", [date]),
       pool.query('SELECT closing_id AS "closingId", shift_date AS "shiftDate", cashier_name AS "cashierName", summary, closed_at AS "closedAt" FROM shift_closings ORDER BY closed_at DESC LIMIT 100'),
     ])
@@ -1038,14 +1068,14 @@ app.get('/api/v1/cashier/shift-closings/:closingId', requireAuthenticatedUser, r
 app.get('/api/v1/admin/orders', requireAuthenticatedUser, requireRole('admin'), async (_request, response, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT orders.id, orders.order_type AS "orderType", orders.version, orders.order_number AS "orderNumber", orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.subtotal,
+      SELECT orders.id, ${pickupFieldsSql}, orders.order_type AS "orderType", orders.version, orders.order_number AS "orderNumber", orders.status, orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.subtotal,
         orders.discount_amount AS "discountAmount", orders.service_charge AS "serviceCharge", orders.sst,
         orders.grand_total AS "grandTotal", orders.created_at AS "createdAt", orders.updated_at AS "updatedAt",
         orders.paid_at AS "paidAt", orders.receipt_number AS "receiptNumber", orders.payment_method AS "paymentMethod",
-        restaurant_tables.table_number AS "tableNumber", customer_sessions.nickname AS "customerNickname",
+        restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn", customer_sessions.nickname AS "customerNickname",
         COALESCE(jsonb_agg(jsonb_build_object('id', order_items.id, 'menuItemId', order_items.menu_item_id, 'name', order_items.item_name, 'price', order_items.unit_price, 'orderType', order_items.order_type, 'quantity', order_items.quantity, 'paidQuantity', order_items.paid_quantity, 'fulfilledQuantity', order_items.fulfilled_quantity, 'selections', order_items.selections, 'optionSnapshot', order_items.option_snapshot, 'notes', order_items.notes) ORDER BY order_items.id) FILTER (WHERE order_items.id IS NOT NULL), '[]'::jsonb) AS items
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
-      JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
+      LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       JOIN customer_sessions ON customer_sessions.id = orders.customer_session_id
       LEFT JOIN order_items ON order_items.order_id = orders.id
       GROUP BY orders.id, restaurant_tables.table_number, customer_sessions.nickname
@@ -1069,9 +1099,9 @@ app.get('/api/v1/admin/dashboard', requireAuthenticatedUser, requireRole('admin'
   const today = businessDate()
   try {
     const [metrics, popularFoods, recentOrders] = await Promise.all([
-      pool.query(`SELECT count(*) FILTER (WHERE (created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date)::int AS "todayOrderCount", (SELECT COALESCE(sum(amount), 0) FROM payments WHERE (paid_at AT TIME ZONE 'Asia/Kuching')::date = $1::date) AS "todayRevenue", count(*) FILTER (WHERE status IN ('received', 'preparing', 'ready'))::int AS "activeOrderCount" FROM orders`, [today]),
+      pool.query(`SELECT count(*) FILTER (WHERE (orders.created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date)::int AS "todayOrderCount", (SELECT COALESCE(sum(amount), 0) FROM payments WHERE (paid_at AT TIME ZONE 'Asia/Kuching')::date = $1::date) AS "todayRevenue", count(*) FILTER (WHERE orders.status IN ('received', 'preparing', 'ready') AND table_sessions.status = 'active')::int AS "activeOrderCount" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id`, [today]),
       pool.query(`SELECT order_items.item_name AS name, sum(order_items.quantity)::int AS quantity FROM orders JOIN order_items ON order_items.order_id = orders.id WHERE orders.status <> 'cancelled' AND (orders.created_at AT TIME ZONE 'Asia/Kuching')::date = $1::date GROUP BY order_items.item_name ORDER BY quantity DESC, name ASC LIMIT 5`, [today]),
-      pool.query(`SELECT orders.id, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.status, orders.grand_total AS "grandTotal", orders.created_at AS "createdAt", restaurant_tables.table_number AS "tableNumber" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id ORDER BY orders.created_at DESC LIMIT 5`),
+      pool.query(`SELECT orders.id, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.status, orders.payment_status AS "paymentStatus", orders.paid_amount AS "paidAmount", orders.grand_total AS "grandTotal", orders.created_at AS "createdAt", orders.table_session_id AS "tableSessionId", table_sessions.status AS "tableSessionStatus", restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn" FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id ORDER BY orders.created_at DESC LIMIT 5`),
     ])
     const requests = await pool.query("SELECT count(*)::int AS count FROM service_requests WHERE status = 'pending'")
     response.status(200).json({ dashboard: { ...metrics.rows[0], pendingRequestCount: requests.rows[0].count, popularFoods: popularFoods.rows, recentOrders: recentOrders.rows } })
@@ -1248,7 +1278,8 @@ app.post('/api/v1/admin/tables/:tableId/clear', requireAuthenticatedUser, requir
     }
     const tableSessionId = activeSession.rows[0].id
     if (Object.hasOwn(request.body ?? {}, 'expectedTableSessionId') && request.body.expectedTableSessionId !== tableSessionId) throw new PosValidationError('The table visit has changed. Refresh the table panel before clearing it.', 409)
-    const outstanding = await client.query("SELECT 1 FROM orders WHERE table_session_id = $1 AND status <> 'cancelled' AND (payment_status <> 'paid' OR status <> 'served') LIMIT 1 FOR UPDATE", [tableSessionId])
+    const settings = await loadStoreSettings(client)
+    const outstanding = await client.query("SELECT 1 FROM orders WHERE table_session_id = $1 AND status <> 'cancelled' AND (payment_status <> 'paid' OR (status <> 'served' AND NOT (status = 'ready' AND $2::boolean = false))) LIMIT 1 FOR UPDATE", [tableSessionId, settings.config.requireHandoffConfirmation])
     if (outstanding.rowCount) throw new Error('This table has unpaid or undelivered items and cannot be cleared.')
     await client.query("UPDATE customer_sessions SET left_at = COALESCE(left_at, now()) WHERE table_session_id = $1", [tableSessionId])
     await client.query("UPDATE table_sessions SET status = 'completed', updated_at = now() WHERE id = $1", [tableSessionId])
@@ -1375,6 +1406,7 @@ const apiServer = startApiServer(app, port, { onError() {
   void pool.end().catch(() => console.error('[API] Failed to close database pool after startup failure.'))
 } })
 let stopWelcomeWorker = () => {}
-apiServer.once('listening', () => { stopWelcomeWorker = welcomeQueue.start() })
-apiServer.once('close', () => stopWelcomeWorker())
+let stopOrderPushWorker = () => {}
+apiServer.once('listening', () => { stopWelcomeWorker = welcomeQueue.start(); stopOrderPushWorker = orderPushWorker.start() })
+apiServer.once('close', () => { stopWelcomeWorker(); stopOrderPushWorker() })
   const textList = (value) => Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean).slice(0, 50) : String(value ?? '').split(',').map((item) => item.trim()).filter(Boolean).slice(0, 50)
