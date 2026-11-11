@@ -2,7 +2,10 @@ import { Component } from 'react'
 import { useLocation } from 'react-router-dom'
 
 export class AppErrorBoundary extends Component {
-  state = { failed: false }
+  state = { failed: false, resetKey: this.props.resetKey }
+  static getDerivedStateFromProps(props, state) {
+    return props.resetKey !== state.resetKey ? { failed: false, resetKey: props.resetKey } : null
+  }
   static getDerivedStateFromError() { return { failed: true } }
   componentDidCatch(error) { console.error('[DineOS] Page could not render:', error) }
   render() {
@@ -19,5 +22,6 @@ export class AppErrorBoundary extends Component {
 
 export default function PageErrorBoundary({ children }) {
   const { pathname } = useLocation()
-  return <AppErrorBoundary key={pathname}>{children}</AppErrorBoundary>
+  // Reset an error on navigation without remounting the entire portal shell.
+  return <AppErrorBoundary resetKey={pathname}>{children}</AppErrorBoundary>
 }

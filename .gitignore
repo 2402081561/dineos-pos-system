@@ -4,3 +4,13 @@ dist
 .env.local
 *.local
 /.local-tools/
+.DS_Store
+.env.*
+!.env.example
+/output/
+/tmp/
+*.apk
+*.aab
+*.ipa
+*.xcarchive/
+*.xcresult/

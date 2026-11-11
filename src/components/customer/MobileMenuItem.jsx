@@ -38,7 +38,7 @@ export default function MobileMenuItem({ food }) {
       <Link className="block break-words text-[14px] font-bold leading-[1.45] text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500" to={`/menu/${food.id}`}>{food.name}</Link>
       {description && <p className="mt-1 line-clamp-2 break-words text-xs leading-[1.45] text-slate-500">{description}</p>}
     </div>
-    <div className="col-span-2 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-2">
+    <div className="col-span-2 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-2" aria-live="polite" aria-atomic="true">
       <span className="whitespace-nowrap text-[15px] font-extrabold tabular-nums text-slate-900">{formatCurrency(food.price)}</span>
       {unavailable ? <span className="rounded-lg bg-slate-100 px-2 py-1.5 text-xs font-bold text-slate-500">{t('Sold out')}</span> : hasOptions ? <button aria-label={t('Choose options for {{name}}', { name: food.name })} className="min-h-11 rounded-full border border-orange-200 px-3 text-xs font-bold text-orange-700 disabled:opacity-40" disabled={isBusy} onClick={() => navigate(`/menu/${food.id}`)} type="button">{t('Choose options')}</button> : <div className="flex shrink-0 items-center gap-0.5">
         {quantity > 0 && <><button aria-label={t('Decrease {{name}}', { name: food.name })} className="mobile-menu-quantity-button border border-orange-200 bg-white text-orange-700 disabled:opacity-40" disabled={isCartLocked || isBusy} onClick={decrease} type="button">−</button><span aria-label={t('In cart: {{count}}', { count: quantity })} className="min-w-5 text-center text-sm font-bold tabular-nums">{quantity}</span></>}

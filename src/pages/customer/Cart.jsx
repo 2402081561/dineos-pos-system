@@ -19,7 +19,7 @@ import { orderAmounts, resolveOptions } from '../../../server/src/posRules'
 import { subscribePoll } from '../../utils/pollSubscription'
 import { isDefinitiveOrderRejection } from '../../utils/orderSubmission'
 import CartItemEditor from '../../components/customer/CartItemEditor'
-import ConfirmationDialog from '../../components/common/ConfirmationDialog'
+import ConfirmationDialog from '../../components/customer/CustomerConfirmationDialog'
 import { cartItemFingerprint } from '../../utils/cartItemEdit'
 import { customerOrderFingerprint, sameCustomerVisit } from '../../utils/customerVisitStorage'
 
@@ -79,7 +79,6 @@ function Cart() {
   function saveEdit(values) {
     if (!editing || isSubmittingRef.current || isCartLocked || !sameCustomerVisit(editing.session, session)) return 'Your table visit changed. Review your cart again.'
     if (!editCartItem(editing.item.cartRowId, cartItemFingerprint(editing.item), currentMenuById.get(editing.item.menuItemId), values)) return getLastCartError()
-    setEditing(null)
     showToast('Cart item updated.')
     return ''
   }

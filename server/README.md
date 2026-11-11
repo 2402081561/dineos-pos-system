@@ -4,20 +4,25 @@ Member email OTP setup and safe legacy-member linking:
 [MEMBER_EMAIL_OTP.md](MEMBER_EMAIL_OTP.md). Apply migration 029 and configure
 Supabase SMTP before enabling email verification for actual customers.
 
-This is a new, independent backend foundation. It does not connect to, migrate, or modify the current Firebase database.
+This is the current DineOS Express API. The React client calls this API for restaurant operations, PostgreSQL stores operational data, and Supabase Auth provides staff authentication. The API verifies staff identity and permissions before serving protected routes. Firebase tools below are retained for legacy migration, not normal application operation.
 
 ## Local setup
 
-1. Create an empty PostgreSQL database named `dineos_next`.
-2. Copy `.env.example` to `.env` and set a real `DATABASE_URL`.
-3. Apply the schema with `npm run db:schema`.
-4. Run `npm run dev`.
+Run these steps inside `server/` against a dedicated development database:
 
-`GET /health` verifies only the new PostgreSQL connection.
+1. Install dependencies with `npm ci`.
+2. Create an empty local PostgreSQL database named `dineos_next`.
+3. Copy `.env.example` to `.env`; set the local `DATABASE_URL`, Supabase public configuration and allowed frontend origins.
+4. For this **new, empty development database only**, apply the schema with `npm run db:schema`.
+5. Run `npm run dev` (default port 4000).
 
-The existing React/Firebase application deliberately remains unchanged. API routes and a frontend migration should be introduced incrementally after the new database is provisioned and verified.
+Keep email and order push disabled until their separate configuration and device tests are complete. A schema does not automatically create working staff credentials. Staff provisioning is a separate administrative operation; review `scripts/provision-user.js` and its required configuration before using it in a development project.
 
-## Copy the current Firestore data
+`GET /livez` is process liveness and does not query the database. `GET /health` checks database readiness and can return 503 when PostgreSQL is unavailable. See [DIAGNOSTICS.md](DIAGNOSTICS.md).
+
+Do not use these setup commands blindly against an existing or production database. Back up first, review the required migrations and follow their feature-specific instructions. The historical deployment notes below are not an instruction to rerun every upgrade.
+
+## Legacy tooling: copy Firestore data
 
 After the new PostgreSQL database is ready, run `npm run migrate:firestore-snapshot` inside `server/`.
 

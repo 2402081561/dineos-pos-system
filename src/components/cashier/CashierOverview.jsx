@@ -105,7 +105,10 @@ function CashierOverview({ summary, recentOrders, billRequests = [], assignmentA
             <div className="grid grid-cols-2 gap-2"><Link className="flex items-center justify-center rounded-lg border border-slate-200 px-3 py-3 text-center text-xs font-semibold hover:border-orange-300 hover:bg-orange-50" to={`/cashier/new-order?tableId=${encodeURIComponent(table.id)}`}>{uiText("Add order")}</Link>
               {table.tableSessionId && <Button className="!rounded-lg !px-3 !text-xs !shadow-none" variant="outline" onClick={() => setManagingTable(table)}>{uiText("View / edit all orders")}</Button>}
             </div>
-            {payment ? <Button className="mt-3 w-full !rounded-lg !shadow-none" onClick={() => floorProps.onOpenTable(payment)}>{uiText("Collect payment")}</Button> : clearable ? <Button className="mt-3 w-full !rounded-lg !shadow-none" onClick={() => floorProps.onClearTable(clearable)}>{uiText("Clear table")}</Button> : <p className="mt-3 text-xs leading-5 text-slate-500">{table.tableSessionId ? uiText("Paid items may still be waiting for handoff.") : uiText("No active visit.")}</p>}
+            {payment ? <Button className="mt-3 w-full !rounded-lg !shadow-none" onClick={() => floorProps.onOpenTable(payment)}>{uiText("Collect payment")}</Button> : clearable ? <>
+              {floorProps.onStartNewTable && <Button className="mt-3 w-full !rounded-lg !shadow-none" onClick={() => floorProps.onStartNewTable(clearable)}>{uiText('Start new table')}</Button>}
+              <details className="mt-3 text-xs text-slate-500"><summary className="cursor-pointer">{uiText('More actions')}</summary><Button variant="outline" className="mt-2 w-full !rounded-lg !shadow-none" onClick={() => floorProps.onClearTable(clearable)}>{uiText('Clear table')}</Button></details>
+            </> : <p className="mt-3 text-xs leading-5 text-slate-500">{table.tableSessionId ? uiText("Paid items may still be waiting for handoff.") : uiText("No active visit.")}</p>}
           </div>
         </>}
       </section>

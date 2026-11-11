@@ -136,7 +136,7 @@ test('balance lookup isolates physical visits and independent no-table walk-ins'
   assert.equal(tableForPayment(tables, { tableNumber: 1 }), null)
 })
 
-test('customer shared bill and table summary do not label shared totals as personal balances', async () => {
+test('retired customer bill requests redirect to the shared summary without submitting a request', async () => {
   const runtime = hookRuntime()
   const h = await bundleHarness(`export {default as Bill} from './src/pages/customer/Bill.jsx';export {default as Summary} from './src/pages/customer/TableSummary.jsx';export {fixture} from 'split-fixture'`, runtime, {
     useCustomerLanguage: language,
@@ -146,14 +146,10 @@ test('customer shared bill and table summary do not label shared totals as perso
     useCustomerToast: `import {fixture} from 'split-fixture';export default ()=>({showToast:(...a)=>fixture.toasts.push(a)})`,
     customerApi: `import {fixture} from 'split-fixture';export async function createCustomerServiceRequest(...args){fixture.requests.push(args);return {duplicate:false}}`,
   })
-  const allText = (tree) => JSON.stringify(tree, (_key, value) => typeof value === 'function' ? value.name : value)
   const bill = () => runtime.render(h.Bill)
-  assert.match(allText(bill()), /whole table’s unpaid amount/)
-  assert.equal(allText(bill()).includes('Shared session total'), false)
-  const split = findElement(bill(), (node) => node.type === 'button' && allText(node).includes('Select dishes and quantities with the cashier.'))
-  split.props.onClick()
-  await button(bill(), 'Request split bill').props.onClick()
-  assert.deepEqual(h.fixture.requests[0], ['shared', 'requestBill', { billMode: 'split', requestedAmount: null, tableSessionId: 'visit-1' }])
+  assert.equal(bill().props.to, '/table-summary')
+  assert.equal(bill().props.replace, true)
+  assert.deepEqual(h.fixture.requests, [])
   const summary = runtime.render(h.Summary)
   assert.equal(findElement(summary, (node) => node.props?.children === 'You'), null)
   assert.equal(findElement(summary, (node) => node.props?.children === 'Individual total'), null)

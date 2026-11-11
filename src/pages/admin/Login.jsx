@@ -7,9 +7,12 @@ import Button from '../../components/common/Button'
 import useAdminAuth from '../../hooks/useAdminAuth'
 import BrandMark from '../../components/common/BrandMark'
 import { staffReturnPath } from '../../utils/staffReturnPath'
+import usePortalTheme from '../../hooks/usePortalTheme'
+import PortalThemeToggle from '../../components/common/PortalThemeToggle'
 
 function Login() {
   const { t: uiText } = useCustomerLanguage()
+  const { theme, toggleTheme } = usePortalTheme()
 
   const { name } = useShopSettings()
   const navigate = useNavigate()
@@ -42,7 +45,7 @@ function Login() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-8">
-      <div className="w-full max-w-md"><div className="mb-4 flex justify-end"><LanguageSwitch /></div>
+      <div className="w-full max-w-md"><div className="mb-4 flex justify-end gap-2"><PortalThemeToggle theme={theme} onToggle={toggleTheme} /><LanguageSwitch /></div>
         <Link className="mb-6 inline-block text-sm font-medium text-orange-300" to="/">{uiText("← Back to")}{' '}{name}
         </Link>
         {isLoading && isVerifying && <div className="mb-4 rounded-xl border border-orange-300/30 bg-slate-900 p-4 text-sm text-orange-100" role="status"><p className="font-semibold">{uiText('Connecting to restaurant...')}</p><p className="mt-1">{uiText('The first connection may take about a minute. Please keep this page open and do not submit again.')}</p></div>}

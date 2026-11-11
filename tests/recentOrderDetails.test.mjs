@@ -4,6 +4,7 @@ import path from 'node:path'
 import Module, { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { watchOrderDetails } from '../src/utils/orderDetailsSubscription.js'
+import { bundleHarness, hookRuntime, flush } from './helpers/hookHarness.mjs'
 
 function scheduler() {
   let timer
@@ -54,6 +55,45 @@ test('slow polling reads do not overlap, failure and retry recover payment chang
   assert.equal(events.at(-1).order.receiptNumber, 'R001')
   assert.equal(events.at(-1).error, '')
   watcher.stop()
+})
+
+test('closing details aborts the previous read and never starts a queued read after close', async () => {
+  const events = []
+  let signal
+  const watcher = watchOrderDetails((value) => {
+    signal = value
+    return new Promise((_resolve, reject) => value.addEventListener('abort', () => reject(new DOMException('Closed', 'AbortError')), { once: true }))
+  }, state => events.push(state))
+  const pending = watcher.refresh()
+  await Promise.resolve()
+  watcher.stop()
+  assert.equal(signal.aborted, true)
+  await pending
+  assert.equal(events.length, 1, 'Only initial loading, no obsolete error/success')
+  const stopped = watchOrderDetails(() => assert.fail('Closed before initial request'), () => {})
+  const queued = stopped.refresh()
+  stopped.stop()
+  await queued
+})
+
+test('actual details hook cancels rapid previous selections and cleanup reaches the API signal', async () => {
+  const runtime = hookRuntime()
+  const h = await bundleHarness(`export {default as useDetails} from './src/hooks/useOrderDetails.js';export {fixture} from 'details-fixture'`, runtime, {
+    'details-fixture': 'export const fixture={reads:[]}',
+    adminApiService: `import {fixture} from 'details-fixture';export function getSupabaseOrderDetails(id,signal){fixture.reads.push({id,signal});return new Promise((resolve,reject)=>{fixture.reads.at(-1).resolve=resolve;signal.addEventListener('abort',()=>reject(new DOMException('Closed','AbortError')),{once:true})})}`,
+  })
+  // Use a stable component identity, just as React does between prop changes.
+  function Component({ id }) { return h.useDetails(id) }
+  try {
+    runtime.render(Component, { id: 'A' }); runtime.effects(); await flush()
+    runtime.render(Component, { id: 'B' }); runtime.effects(); await flush()
+    assert.equal(h.fixture.reads[0].signal.aborted, true)
+    assert.equal(h.fixture.reads[1].id, 'B')
+    h.fixture.reads[1].resolve({ id: 'B', items: [] }); await flush()
+    assert.equal(runtime.render(Component, { id: 'B' }).order.id, 'B')
+    runtime.cleanup()
+    assert.equal(h.fixture.reads[1].signal.aborted, false, 'Settled read needs no cancellation')
+  } finally { runtime.cleanup() }
 })
 
 test('real detail panel supports mixed items, settled receipt only, hidden zero charges and bilingual copy', () => {

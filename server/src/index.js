@@ -5,9 +5,11 @@ import { orderPushConfig, registerOrderPushRoutes, createOrderPushWorker } from 
 import { identifierInput, registerOrderIdentifierRoutes } from './orderIdentifiers.js'
 import { registerTableVisitMoveRoutes } from './tableVisitMoves.js'
 import { registerWalkInAssignmentRoutes } from './walkInAssignments.js'
-import { createDatabasePool, apiErrorHandler, logDatabaseError } from './databaseConnection.js'
+import { createDatabasePool, apiErrorHandler, logDatabaseError, boundedDatabaseRead } from './databaseConnection.js'
 import { validateKitchenName } from './kitchenName.js'
 import { createHash } from 'node:crypto'
+import { readCashierSnapshot } from './cashierSnapshotReads.js'
+import { prepareNewTableVisit } from './newTableVisit.js'
 import { paymentPlan, selectPaymentOrders } from './paymentSelection.js'
 import { registerHandoffRoutes } from './handoffs.js'
 import cors from 'cors'
@@ -298,7 +300,7 @@ registerTakeAwayRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 
 app.get('/health', async (_request, response) => {
   try {
-    await pool.query('SELECT 1')
+    await boundedDatabaseRead(pool, 'SELECT 1')
     response.status(200).json({ database: 'connected', status: 'ok' })
   } catch (error) {
     logDatabaseError(console, 'PostgreSQL health check failed', error)
@@ -348,8 +350,9 @@ app.post('/api/v1/public/tables/:tableNumber/join', async (request, response, ne
     }
     const table = tableResult.rows[0]
     const activeSession = await client.query("SELECT id, shared_customer_session_id AS \"sharedCustomerSessionId\" FROM table_sessions WHERE table_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1 FOR UPDATE", [table.id])
-    const tableSessionId = activeSession.rows[0]?.id ?? (await client.query("INSERT INTO table_sessions (table_id, status) VALUES ($1, 'active') RETURNING id", [table.id])).rows[0].id
-    let sharedCustomerSessionId = activeSession.rows[0]?.sharedCustomerSessionId
+    const visit = await prepareNewTableVisit(client, table, activeSession.rows[0], request.body, loadStoreSettings)
+    const tableSessionId = visit?.id ?? (await client.query("INSERT INTO table_sessions (table_id, status) VALUES ($1, 'active') RETURNING id", [table.id])).rows[0].id
+    let sharedCustomerSessionId = visit?.sharedCustomerSessionId
     if (!sharedCustomerSessionId) {
       const shared = await client.query("INSERT INTO customer_sessions (table_session_id, nickname) VALUES ($1, 'Shared Table') RETURNING id", [tableSessionId])
       sharedCustomerSessionId = shared.rows[0].id
@@ -361,6 +364,7 @@ app.post('/api/v1/public/tables/:tableNumber/join', async (request, response, ne
     return response.status(201).json({ session: { ...rows[0], tableNumber: table.tableNumber, isSharedTable: true } })
   } catch (error) {
     await client.query('ROLLBACK')
+    if (error instanceof PosValidationError) return response.status(error.status).json({ error: error.message, ...(error.newTableRequired ? { newTableRequired: true, expectedTableSessionId: error.expectedTableSessionId } : {}) })
     return next(error)
   } finally { client.release() }
 })
@@ -817,7 +821,8 @@ app.get('/api/v1/staff/tables', requireAuthenticatedUser, requireRole('admin', '
 
 app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole('admin', 'cashier'), async (_request, response, next) => {
   try {
-    const { rows } = await pool.query(`
+    const [{ rows }, { rows: clearableTables }, { rows: [floorPlan] }, { rows: floorTables }, { rows: [summary] }, { rows: recentOrders }, { rows: billRequests }] = await readCashierSnapshot([
+      () => pool.query(`
       SELECT orders.id, ${pickupFieldsSql}, orders.version, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.table_session_id AS "tableSessionId", orders.member_id AS "memberId", orders.status,
         orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", (orders.subtotal - orders.paid_subtotal) AS subtotal, orders.discount_amount AS "discountAmount",
         orders.service_charge_rate AS "serviceChargeRate", orders.sst_rate AS "sstRate", (orders.service_charge - orders.paid_service_charge) AS "serviceCharge", (orders.sst - orders.paid_sst) AS sst, (orders.grand_total - orders.paid_amount) AS "grandTotal",
@@ -831,8 +836,8 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
       WHERE orders.status <> 'cancelled' AND orders.payment_status = 'pending'
       GROUP BY orders.id, restaurant_tables.id, restaurant_tables.table_number, customer_sessions.id, customer_sessions.nickname
       ORDER BY orders.updated_at DESC
-    `)
-    const { rows: clearableTables } = await pool.query(`
+    `),
+      () => pool.query(`
       SELECT restaurant_tables.id AS "tableId", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn", table_sessions.id AS "tableSessionId"
       FROM restaurant_tables
       JOIN table_sessions ON table_sessions.table_id = restaurant_tables.id AND table_sessions.status = 'active'
@@ -843,9 +848,9 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
             AND orders.status <> 'cancelled'
         )
       ORDER BY restaurant_tables.table_number ASC
-    `)
-    const { rows: [floorPlan] } = await pool.query('SELECT markers, revision FROM floor_plan_settings WHERE id = 1')
-    const { rows: floorTables } = await pool.query(`
+    `),
+      () => pool.query('SELECT markers, revision FROM floor_plan_settings WHERE id = 1'),
+      () => pool.query(`
       SELECT restaurant_tables.id, restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn", restaurant_tables.capacity,
         restaurant_tables.floor_x AS "floorX", restaurant_tables.floor_y AS "floorY", restaurant_tables.floor_zone AS "floorZone", restaurant_tables.floor_style AS "floorStyle", restaurant_tables.floor_point AS "floorPoint",
         restaurant_tables.is_enabled AS "isEnabled", active_sessions.id AS "tableSessionId",
@@ -877,8 +882,8 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
         FROM orders WHERE table_session_id = active_sessions.id
       ) order_data ON true
       ORDER BY restaurant_tables.table_number ASC
-    `)
-    const { rows: [summary] } = await pool.query(`
+    `),
+      () => pool.query(`
       SELECT COALESCE(sum(amount), 0)::double precision AS sales,
         count(*)::int AS transactions,
         COALESCE(avg(amount), 0)::double precision AS "averageBill",
@@ -887,16 +892,17 @@ app.get('/api/v1/cashier/pending-orders', requireAuthenticatedUser, requireRole(
       FROM payments
       WHERE paid_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kuching') AT TIME ZONE 'Asia/Kuching')
         AND paid_at < ((date_trunc('day', now() AT TIME ZONE 'Asia/Kuching') + interval '1 day') AT TIME ZONE 'Asia/Kuching')
-    `)
-    const { rows: recentOrders } = await pool.query(`
+    `),
+      () => pool.query(`
       SELECT orders.id, ${pickupFieldsSql}, orders.order_type AS "orderType", orders.order_number AS "orderNumber", orders.status,
         orders.paid_amount AS "paidAmount", orders.payment_status AS "paymentStatus", orders.grand_total::double precision AS "grandTotal",
         orders.created_at AS "createdAt", restaurant_tables.id AS "tableId", orders.table_session_id AS "tableSessionId", restaurant_tables.table_number AS "tableNumber", restaurant_tables.table_number IS NULL AS "isWalkIn"
       FROM orders JOIN table_sessions ON table_sessions.id = orders.table_session_id
       LEFT JOIN restaurant_tables ON restaurant_tables.id = table_sessions.table_id
       ORDER BY orders.created_at DESC, orders.id DESC LIMIT 8
-    `)
-    const { rows: billRequests } = await pool.query(`SELECT service_requests.id, table_sessions.table_id AS "tableId", service_requests.details FROM service_requests JOIN table_sessions ON table_sessions.id = service_requests.table_session_id WHERE request_type = 'requestBill' AND service_requests.status = 'pending' AND table_sessions.status = 'active'`)
+    `),
+      () => pool.query(`SELECT service_requests.id, table_sessions.table_id AS "tableId", service_requests.details FROM service_requests JOIN table_sessions ON table_sessions.id = service_requests.table_session_id WHERE request_type = 'requestBill' AND service_requests.status = 'pending' AND table_sessions.status = 'active'`),
+    ])
     response.status(200).json({ orders: rows, clearableTables, floorTables, floorPlan, summary, recentOrders, billRequests })
   } catch (error) { next(error) }
 })

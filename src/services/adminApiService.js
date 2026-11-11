@@ -10,13 +10,14 @@ export async function cancelSupabaseAdminOrder(orderId, reason, expectedVersion)
 }
 
 export function subscribeToSupabaseAdminMenu(onData, onError) {
-  return poll(async () => {
+  const watcher = watchPoll(async (signal) => {
     const [menu, categories] = await Promise.all([
-      authenticatedApiRequest('/api/v1/admin/menu-items'),
-      authenticatedApiRequest('/api/v1/admin/categories'),
+      authenticatedApiRequest('/api/v1/admin/menu-items', { signal }),
+      authenticatedApiRequest('/api/v1/admin/categories', { signal }),
     ])
     return { categories: categories.categories, menuItems: menu.items }
   }, onData, onError)
+  return Object.assign(watcher.stop, { refreshLatest: watcher.refreshLatest, invalidate: watcher.invalidate })
 }
 
 export function subscribeToSupabaseAdminTables(onData, onError) {
@@ -64,8 +65,8 @@ export function subscribeToSupabaseMemberPoints(memberId, onData, onError) { ret
 export function subscribeToSupabaseRewards(onData, onError) { return poll(async () => (await authenticatedApiRequest('/api/v1/admin/rewards')).rewards, onData, onError, 15000) }
 export async function saveSupabaseReward(input, id = '') { return (await authenticatedApiRequest(id ? `/api/v1/admin/rewards/${encodeURIComponent(id)}` : '/api/v1/admin/rewards', { method: id ? 'PATCH' : 'POST', body: input })).reward }
 export async function getSupabaseTableOrders(tableId, tableSessionId) { return (await authenticatedApiRequest(`/api/v1/cashier/tables/${encodeURIComponent(tableId)}/orders${tableSessionId ? `?tableSessionId=${encodeURIComponent(tableSessionId)}` : ''}`)).orders }
-export async function getSupabaseOrderDetails(orderId) {
-  const { order } = await authenticatedApiRequest(`/api/v1/cashier/orders/${encodeURIComponent(orderId)}`)
+export async function getSupabaseOrderDetails(orderId, signal) {
+  const { order } = await authenticatedApiRequest(`/api/v1/cashier/orders/${encodeURIComponent(orderId)}`, { signal })
   if (order?.id !== orderId || !Array.isArray(order.items)) throw new Error('Order details unavailable')
   return order
 }

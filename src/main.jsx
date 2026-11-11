@@ -9,6 +9,7 @@ import ToastProvider from './context/ToastProvider'
 import ShopSettingsProvider from './context/ShopSettingsProvider'
 import ToastViewport from './components/common/ToastViewport'
 import './styles/index.css'
+import './styles/portal-theme.css'
 import CustomerLanguageProvider from './context/CustomerLanguageProvider'
 import { AppErrorBoundary } from './components/common/PageErrorBoundary'
 

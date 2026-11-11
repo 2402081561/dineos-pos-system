@@ -1,5 +1,6 @@
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import Button from '../common/Button'
+import MoneyInput from '../common/MoneyInput'
 
 const inputClass = 'w-full min-w-0 rounded-lg border border-slate-200 px-2 py-2 text-sm'
 const newOption = () => ({ id: crypto.randomUUID(), label: '', price: 0, isAvailable: true })
@@ -16,7 +17,7 @@ export default function OptionGroupEditor({ groups = [], onChange, disabled }) {
       <div className="grid grid-cols-2 gap-3">{['min', 'max'].map((key) => <label className="text-xs font-semibold" key={key}>{key === 'min' ? uiText("Minimum selections") : uiText("Maximum selections")}<input aria-label={uiText("Group {{v0}} {{v1}}", { v0: index + 1, v1: key })} className={inputClass} min={key === 'min' ? 0 : 1} max={20} required type="number" value={group[key]} onChange={(e) => update(group.id, { [key]: e.target.value === '' ? '' : Number(e.target.value) })} /></label>)}</div>
       {group.options.map((option, optionIndex) => <div className="grid grid-cols-[minmax(0,1fr)_90px] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_90px_75px_36px]" key={option.id}>
         <label className="text-xs">{uiText("Option name")}<input aria-label={uiText("Group {{v0}} option {{v1}} name", { v0: index + 1, v1: optionIndex + 1 })} className={inputClass} required maxLength={80} placeholder={uiText("e.g. Hot")} value={uiText(option.label)} onChange={(e) => optionUpdate(group, option.id, { label: e.target.value })} /></label>
-        <label className="text-xs">{uiText("Extra RM")}<input aria-label={uiText("Group {{v0}} option {{v1}} price", { v0: index + 1, v1: optionIndex + 1 })} className={inputClass} type="number" min={0} max={999999.99} step="0.01" required value={option.price} onChange={(e) => optionUpdate(group, option.id, { price: e.target.value })} /></label>
+        <label className="text-xs">{uiText("Extra RM")}<MoneyInput aria-label={uiText("Group {{v0}} option {{v1}} price", { v0: index + 1, v1: optionIndex + 1 })} className={inputClass} required placeholder="0.50" value={option.price} onChange={(e) => optionUpdate(group, option.id, { price: e.target.value })} /></label>
         <label className="py-2 text-xs"><input className="mr-1" type="checkbox" checked={option.isAvailable} onChange={(e) => optionUpdate(group, option.id, { isAvailable: e.target.checked })} />{uiText("Available")}</label>
         <button aria-label={uiText("Remove option {{v0}} from group {{v1}}", { v0: optionIndex + 1, v1: index + 1 })} className="rounded-lg p-2 text-red-600" type="button" onClick={() => update(group.id, { options: group.options.filter((entry) => entry.id !== option.id) })}>×</button>
       </div>)}

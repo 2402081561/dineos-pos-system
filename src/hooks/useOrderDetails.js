@@ -7,7 +7,7 @@ export default function useOrderDetails(orderId, paused = false) {
   const subscription = useRef(null)
   useEffect(() => {
     if (paused) return undefined
-    const watcher = watchOrderDetails(() => getSupabaseOrderDetails(orderId), (next) => setState({ ...next, orderId }))
+    const watcher = watchOrderDetails((signal) => getSupabaseOrderDetails(orderId, signal), (next) => setState({ ...next, orderId }))
     subscription.current = watcher
     return () => { watcher.stop(); subscription.current = null }
   }, [orderId, paused])

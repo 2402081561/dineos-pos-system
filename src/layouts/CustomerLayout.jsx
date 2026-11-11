@@ -7,7 +7,7 @@ import useCart from '../hooks/useCart'
 import useShopSettings from '../hooks/useShopSettings'
 import useCustomerSession from '../hooks/useCustomerSession'
 import { Link, NavLink, useLocation } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useLayoutEffect } from 'react'
 
 function CustomerLayoutContent() {
   const { t } = useCustomerLanguage()
@@ -15,10 +15,12 @@ function CustomerLayoutContent() {
   const cartSubtotal = cartItems.reduce((total, item) => total + Number(item.unitPrice) * Number(item.quantity), 0)
   const { session } = useCustomerSession()
   const { pathname } = useLocation()
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Menu category/dish selection may leave the viewport far down the page.
     // Review and confirmation must start at their heading, not at that offset.
-    if (pathname === '/cart' || pathname === '/tracking' || /^\/menu\/[^/]+$/.test(pathname)) window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+    // Only the menu owns a saved browse position; other customer pages start
+    // at their heading. Do not race useMenuBrowse's layout-effect restoration.
+    if (pathname !== '/menu') window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
   }, [pathname])
   const { settings, isLoading: settingsLoading, error: settingsError } = useShopSettings()
   const isOrdersPage = ['/orders', '/tracking'].includes(pathname)
@@ -37,9 +39,6 @@ function CustomerLayoutContent() {
   const sectionLinks = isOrdersPage ? [
     { label: 'My orders', to: '/orders' },
     { label: 'Track latest order', to: '/tracking' },
-  ] : isTableBillPage ? [
-    { label: 'Table orders', to: '/table-summary' },
-    { label: 'Request bill', to: '/bill' },
   ] : []
   const sectionNavigation = session && sectionLinks.length > 0 && <nav aria-label={isOrdersPage ? t("Order views") : t("Table bill views")} className="mx-auto flex max-w-4xl gap-2 rounded-xl border border-slate-100 bg-white p-1.5">{sectionLinks.map(({ label, to }) => <NavLink className={({ isActive }) => `flex-1 rounded-lg px-3 py-2 text-center text-xs font-semibold transition sm:text-sm ${isActive ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'}`} end key={to} to={to}>{t(label)}</NavLink>)}</nav>
 

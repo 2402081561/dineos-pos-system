@@ -17,6 +17,7 @@ import RewardRedemption from '../../components/cashier/RewardRedemption'
 import useCashierTables from '../../hooks/useCashierTables'
 import { calculateTableDiscount } from '../../services/orderService'
 import { clearSupabaseCashierTable, completeSupabaseTablePayment } from '../../services/adminApiService'
+import { joinCustomerTable } from '../../services/customerApi'
 import { formatCurrency } from '../../utils/currency'
 import { getCashPayment } from '../../utils/cashPayment'
 import { paymentPlan, selectPaymentOrders } from '../../../server/src/paymentSelection'
@@ -75,6 +76,7 @@ function CashierDashboard() {
   const [clearedTableIds, setClearedTableIds] = useState([])
   const [isClearing, setIsClearing] = useState(false)
   const [clearError, setClearError] = useState('')
+  const clearingBusy = useRef(false)
 
   const selectedTable = tables.find((table) => (table.billKey ?? table.tableNumber) === selectedTableNumber) ?? paymentConfirmation?.tableSnapshot
   const selections = useMemo(() => billSelections(selectedTable?.orders ?? [], quantities, splitPayment), [selectedTable?.orders, quantities, splitPayment])
@@ -215,32 +217,40 @@ function CashierDashboard() {
   }
 
   async function clearTable() {
-    if (!clearingTable?.tableId) return
+    if (!clearingTable?.tableId || clearingBusy.current) return
+    clearingBusy.current = true
     try {
       setIsClearing(true)
       setClearError('')
-      await clearSupabaseCashierTable(clearingTable.tableId, clearingTable.tableSessionId)
-      setClearedTableIds((current) => [...new Set([...current, clearKey(clearingTable)])])
+      if (clearingTable.newTableSessionId) {
+        if (clearingTable.actorId !== user?.id) throw new Error('Reopen this panel after switching accounts.')
+        await joinCustomerTable(clearingTable.tableNumber, 'Shared Table', { expectedTableSessionId: clearingTable.tableSessionId, newTableSessionId: clearingTable.newTableSessionId })
+        await refreshPayments()
+      } else {
+        await clearSupabaseCashierTable(clearingTable.tableId, clearingTable.tableSessionId)
+        setClearedTableIds((current) => [...new Set([...current, clearKey(clearingTable)])])
+      }
       setClearingTable(null)
     } catch (apiError) {
       console.error('[Cashier] Failed to clear table:', apiError)
       setClearError(apiError.message || 'We could not clear this table. Check for new unpaid orders and try again.')
-      setClearingTable(null)
+      if (!clearingTable.newTableSessionId) setClearingTable(null)
     } finally {
+      clearingBusy.current = false
       setIsClearing(false)
     }
   }
 
   const clearTableDialog = clearingTable ? (
     <ConfirmationDialog
-      confirmLabel="Clear table"
-      description={uiText("Clear Table {{v0}}? Confirm the customer is finished. This ends the visit and makes the table available again. Orders and receipts remain saved.", { v0: clearingTable.tableNumber })}
+      confirmLabel={clearingTable.newTableSessionId ? 'Start new table' : 'Clear table'}
+      description={clearError || (clearingTable.newTableSessionId ? uiText('The previous bill is settled. Confirm that the previous guests have finished and you are a new group. Old orders and receipts remain saved.') : uiText("Clear Table {{v0}}? Confirm the customer is finished. This ends the visit and makes the table available again. Orders and receipts remain saved.", { v0: clearingTable.tableNumber }))}
       isLoading={isClearing}
       onCancel={() => {
         if (!isClearing) setClearingTable(null)
       }}
       onConfirm={clearTable}
-      title={uiText("Clear Table {{v0}}?", { v0: clearingTable.tableNumber })}
+      title={clearingTable.newTableSessionId ? uiText('Start a new table?') : uiText("Clear Table {{v0}}?", { v0: clearingTable.tableNumber })}
     />
   ) : null
 
@@ -277,6 +287,10 @@ function CashierDashboard() {
           onClearTable={(table) => {
             setClearError('')
             setClearingTable(table)
+          }}
+          onStartNewTable={(table) => {
+            setClearError('')
+            setClearingTable({ ...table, actorId: user?.id, newTableSessionId: crypto.randomUUID() })
           }}
           onLayoutSaved={(positions, savedPlan) => {
             if (savedPlan) setFloorPlan(savedPlan)

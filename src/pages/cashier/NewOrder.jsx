@@ -47,6 +47,7 @@ function NewOrder() {
   const [category, setCategory] = useState('All')
   const [optionItem, setOptionItem] = useState(null)
   const [isOrderExpanded, setIsOrderExpanded] = useState(false)
+  const [isTableEditing, setIsTableEditing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [availabilityUpdates, setAvailabilityUpdates] = useState(new Set())
   const [placedOrder, setPlacedOrder] = useState(null)
@@ -109,6 +110,7 @@ function NewOrder() {
     : setup?.tables.find((table) => table.id === selectedTableId)
   const selectedTable = currentTable ?? (hasPendingRequest ? { id: selectedTableId, tableNumber: draft.tableNumber || '—' } : null)
   const tableVisitChanged = Boolean(!hasPendingRequest && selectedTableId && setup && (!currentTable || (Object.hasOwn(draft, 'expectedTableSessionId') && draft.expectedTableSessionId !== (currentTable.tableSessionId ?? null))))
+  const showTableEditor = isTableEditing || !selectedTableId || !currentTable || tableVisitChanged
   const menu = useMemo(() => setup?.items ?? [], [setup])
   const categories = useMemo(() => ['All', ...new Set(menu.map((item) => item.categoryName || 'Other'))], [menu])
   const filtered = menu.filter((item) => {
@@ -228,13 +230,7 @@ function NewOrder() {
   </div>
 
   return <div className="space-y-4 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:gap-4 lg:overflow-hidden lg:space-y-0">
-    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-      <div className="flex min-w-0 items-center gap-3"><h1 className="text-sm font-semibold text-slate-700">{uiText("New order")}</h1>{restored && Object.keys(cart).length > 0 && !hasPendingRequest && <span role="status" title={uiText('Your unfinished counter order has been restored. Review the table, dishes and latest prices before sending.')} className="text-[11px] text-slate-500">{uiText('Draft restored')}</span>}</div>
-      <div className="flex flex-wrap items-center gap-2">
-        {setup && <button className="min-h-9 rounded-md px-2 text-xs font-semibold text-orange-700 hover:bg-orange-50 disabled:opacity-50" disabled={isLoading || isSubmitting} onClick={() => void loadSetup()} type="button">{isLoading ? uiText("Refreshing...") : uiText("Refresh tables & menu")}</button>}
-        <Link className="rounded-md px-2 py-2 text-xs font-semibold text-slate-500 hover:bg-white hover:text-orange-700" to={selectedTableId && selectedTableId !== 'walk-in' ? `/cashier?tableId=${encodeURIComponent(selectedTableId)}` : "/cashier"}>{uiText("Back to dashboard")}</Link>
-      </div>
-    </div>
+    <h1 className="sr-only">{uiText('New order')}</h1>
     {storageWarning && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{uiText('Your browser could not save this order safely. Enable session storage before sending.')}</p>}
     {hasPendingRequest && <section role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"><h2 className="font-bold">{uiText('Order confirmation pending')}</h2><p className="mt-1">{uiText('Your previous counter order is awaiting confirmation. Retry it before changing dishes or tables.')}</p>{!setup && <Button className="mt-3" disabled={isSubmitting} onClick={() => void placeOrder({ preventDefault() {} })}>{isSubmitting ? uiText('Sending order...') : uiText('Retry previous order')}</Button>}</section>}
     {draft.recoveryRequired && <section role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p>{uiText('Review your saved counter order before continuing.')}</p><p className="mt-1">{uiText('Check recent orders before discarding a damaged draft to avoid a duplicate order.')}</p><div className="mt-3 flex flex-wrap gap-3"><Link to="/cashier" className="font-bold underline">{uiText('Back to dashboard')}</Link><button type="button" className="font-bold underline" onClick={() => setIsDiscarding(true)}>{uiText('Discard damaged draft')}</button></div></section>}
@@ -269,9 +265,14 @@ function NewOrder() {
         </div>
       </section>
       <aside aria-label={uiText("Order summary")} className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm">
-        <div className="shrink-0 border-b border-slate-100 p-4 lg:max-h-[40%] lg:overflow-y-auto lg:overscroll-contain">
-          <h2 className="text-lg font-bold">{uiText("Order summary")}</h2>
-          <label className="mt-3 block text-xs font-semibold text-slate-600" htmlFor="counter-table">{uiText("Table")}{' '}</label>
+        <div className="shrink-0 border-b border-slate-100 px-4 py-2 lg:max-h-[40%] lg:overflow-y-auto lg:overscroll-contain">
+          <div className="flex min-h-11 items-center justify-between gap-2">
+            <div className="min-w-0"><h2 className="truncate text-sm font-bold">{selectedTable ? orderLocationLabel(selectedTable, uiText) : uiText('Choose a table')}</h2>{!showTableEditor && (customerNickname || draft.ticketReference || draft.ticketSeat) && <p className="truncate text-xs text-slate-500">{[customerNickname, draft.ticketSeat, draft.ticketReference].filter(Boolean).join(' · ')}</p>}</div>
+            {selectedTableId && currentTable && !tableVisitChanged && <button type="button" aria-expanded={showTableEditor} aria-controls="counter-table-editor" disabled={isEditingDisabled} onClick={() => setIsTableEditing(current => !current)} className="min-h-11 shrink-0 rounded-lg px-2 text-xs font-semibold text-orange-700 hover:bg-orange-50 disabled:opacity-50">{uiText(showTableEditor ? 'Close' : 'Edit table')}</button>}
+          </div>
+          {restored && Object.keys(cart).length > 0 && !hasPendingRequest && <span role="status" className="sr-only" title={uiText('Your unfinished counter order has been restored. Review the table, dishes and latest prices before sending.')}>{uiText('Draft restored')}</span>}
+          <div id="counter-table-editor" hidden={!showTableEditor} className="pb-2">
+          <label className="block text-xs font-semibold text-slate-600" htmlFor="counter-table">{uiText("Table")}{' '}</label>
           <select id="counter-table" className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" disabled={isEditingDisabled} required value={selectedTableId} onChange={(event) => { setSelectedTableId(event.target.value); setSubmitError('') }}><option value="">{uiText("Choose a table")}</option>{setup.walkInEnabled && <option value="walk-in">{uiText("Walk-in (no table)")}</option>}{selectedTableId && !currentTable && <option value={selectedTableId} disabled>{selectedTableId === 'walk-in' ? uiText('Walk-in (no table)') : `${uiText("Table")} ${draft.tableNumber || '—'}`}</option>}{setup.tables.map((table) => <option key={table.id} value={table.id}>{uiText("Table")}{' '}{table.tableNumber}</option>)}</select>
           {setup.tables.length === 0 && <p className="mt-2 text-xs text-slate-500">{uiText("No enabled tables are available.")}</p>}
           <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50/50 px-3">
@@ -279,6 +280,7 @@ function NewOrder() {
           <label className="mt-3 block text-xs font-semibold text-slate-600" htmlFor="counter-name">{uiText("Customer name")}<span className="font-normal text-slate-400">{uiText("(optional)")}</span></label><input id="counter-name" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" disabled={isEditingDisabled} maxLength={80} onChange={(event) => { setCustomerNickname(event.target.value) }} placeholder={uiText("Guest")} value={customerNickname} />
           {hasSavedTableVisitTools&&<CounterIdentifierFields draft={draft} disabled={isEditingDisabled} onChange={(key,value)=>changeDraft((current)=>({...current,[key]:value}))}/>}
           </details>
+          </div>
         </div>
         <div aria-label={uiText("Selected dishes")} className="flex min-h-0 flex-col lg:flex-1">
           <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-2"><h3 className="text-sm font-bold">{uiText("Order items")}<span className="ml-1.5 text-xs font-normal text-slate-400">({cartItems.reduce((sum, item) => sum + item.quantity, 0)})</span></h3><button type="button" aria-haspopup="dialog" onClick={() => setIsOrderExpanded(true)} className="min-h-10 rounded-lg px-2 text-xs font-semibold text-orange-700 hover:bg-orange-50">↗ {uiText('Expand order')}</button></div>

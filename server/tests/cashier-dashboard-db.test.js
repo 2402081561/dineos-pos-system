@@ -8,7 +8,8 @@ test('cashier sales use payment amounts and Malaysian day boundaries, including 
   dotenv.config({ path: new URL('../.env', import.meta.url) })
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL })
   const source = await readFile(new URL('../src/index.js', import.meta.url), 'utf8')
-  const query = source.split('const { rows: [summary] } = await pool.query(`')[1].split('`)')[0]
+  const query = source.match(/SELECT COALESCE\(sum\(amount\), 0\)::double precision AS sales,[\s\S]*?FROM payments[\s\S]*?(?=`)/)?.[0]
+  assert.ok(query, 'Cashier summary SELECT must remain available for validation')
   await client.connect()
   try {
     await client.query('BEGIN')

@@ -19,7 +19,7 @@ test('schema-031 kitchen dialog can preview and print temporary labels without a
   let prints = 0
   Object.defineProperty(globalThis, 'document', { configurable: true, value: { body: {} } })
   Object.defineProperty(globalThis, 'window', { configurable: true, value: { print() { prints++ } } })
-  const h = await bundleHarness(`export {default as Dialog} from './src/components/kitchen/KitchenTicketDialog.jsx'`, runtime, {
+  const h = await bundleHarness(`export {default as Dialog} from './src/components/kitchen/KitchenTicketDialog.jsx';export {default as Paper} from './src/components/kitchen/KitchenTicketPaper.jsx'`, runtime, {
     useCustomerLanguage: 'export default ()=>({t:text=>text})',
     deploymentFeatures: 'export const hasSavedTableVisitTools=false',
     'react-dom': 'export const createPortal=node=>node',
@@ -36,9 +36,11 @@ test('schema-031 kitchen dialog can preview and print temporary labels without a
     assert.equal(inputs.length, 2)
     inputs[0].props.onChange({ target: { value: '8899' } })
     inputs[1].props.onChange({ target: { value: 'QAA1234' } })
-    assert.ok(findElement(view(), (node) => node.type === 'p' && node.props.children === '8899'))
-    assert.ok(findElement(view(), (node) => node.type === 'p' && node.props.children === 'QAA1234'))
-    assert.ok(findElement(view(), (node) => node.type === 'p' && node.props.children === '2× cont kt'))
+    const paper = h.Paper(findElement(view(), node => node.type === h.Paper).props)
+    assert.ok(findElement(paper, (node) => node.type === 'p' && node.props.children === '8899'))
+    assert.ok(findElement(paper, (node) => node.type === 'p' && node.props.children === 'QAA1234'))
+    assert.ok(findElement(paper, (node) => node.type === 'p' && node.props.children === 'cont kt'))
+    assert.ok(findElement(paper, node => node.type === 'strong' && node.props.children.join('') === '2×'))
     action().props.onClick()
     assert.equal(prints, 1)
   } finally {

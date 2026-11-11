@@ -6,6 +6,8 @@ import Button from '../common/Button'
 import OptionSummary from '../common/OptionSummary'
 import { formatCurrency } from '../../utils/currency'
 import { customerOrderLabel } from '../../utils/customerOrder'
+import useCustomerDialog from '../../hooks/useCustomerDialog'
+import { useImageFallback } from '../../utils/image'
 
 function valueOrDash(value) {
   const normalizedValue = String(value ?? '').trim()
@@ -24,11 +26,12 @@ function textValue(value) {
 function ItemImage({ item }) {
   const imageUrl = textValue(item?.imageUrl)
   if (!imageUrl) return <div aria-hidden="true" className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-2xl">🍽️</div>
-  return <img alt="" className="h-16 w-16 shrink-0 rounded-2xl object-cover" onError={(event) => { event.currentTarget.style.display = 'none' }} src={imageUrl} />
+  return <img alt="" width="64" height="64" className="h-16 w-16 shrink-0 rounded-2xl bg-slate-100 object-cover" onError={useImageFallback} src={imageUrl} />
 }
 
 function CustomerOrderDetailsModal({ onClose, order }) {
   const { t, formatDate, statusLabel } = useCustomerLanguage()
+  const { dialog, close, keyDown, isClosing } = useCustomerDialog(onClose, Boolean(order))
   if (!order) return null
 
   const items = Array.isArray(order.items) ? order.items : []
@@ -37,9 +40,9 @@ function CustomerOrderDetailsModal({ onClose, order }) {
   const orderNote = textValue(order.orderNotes ?? order.notes ?? order.specialInstructions)
 
   return createPortal(
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/45 p-4 backdrop-blur-[2px]" onMouseDown={onClose}>
-      <section aria-labelledby="customer-order-details-title" aria-modal="true" className="mx-auto my-6 w-full max-w-xl animate-[page-enter_180ms_ease-out] rounded-3xl bg-white p-5 shadow-2xl sm:my-10 sm:p-7" onMouseDown={(event) => event.stopPropagation()} role="dialog">
-        <div className="flex items-start justify-between gap-4"><div><p className="eyebrow">{t("Order details")}</p><OrderTypeBadge orderType={order.orderType} className="mb-2" /><h2 className="mt-1 text-xl font-bold text-slate-900" id="customer-order-details-title">{orderNumber}</h2></div><Button aria-label={t("Close order details")} className="min-h-11" onClick={onClose} variant="outline">{t("Close")}</Button></div>
+    <div className={`customer-dialog-backdrop ${isClosing ? 'is-closing' : ''}`} onKeyDown={keyDown} onMouseDown={event => { if (event.target === event.currentTarget) close() }}>
+      <section ref={dialog} aria-labelledby="customer-order-details-title" aria-modal="true" className="customer-dialog-panel w-full max-w-xl rounded-3xl bg-white p-5 shadow-2xl sm:p-7" role="dialog">
+        <div className="customer-dialog-heading flex items-start justify-between gap-4"><div><p className="eyebrow">{t("Order details")}</p><OrderTypeBadge orderType={order.orderType} className="mb-2" /><h2 tabIndex={-1} className="mt-1 text-xl font-bold text-slate-900 outline-none" id="customer-order-details-title">{orderNumber}</h2></div><Button aria-label={t("Close order details")} className="min-h-11" onClick={close} variant="outline">{t("Close")}</Button></div>
         <dl className="mt-6 grid grid-cols-2 gap-4 rounded-2xl bg-slate-50 p-4 text-sm"><div><dt className="text-slate-500">{t("Table")}</dt><dd className="mt-1 font-bold text-slate-800">{valueOrDash(order.tableNumber ?? order.tableId)}</dd></div><div><dt className="text-slate-500">{t("Order date")}</dt><dd className="mt-1 font-bold text-slate-800">{formatDate(order.createdAt)}</dd></div><div><dt className="text-slate-500">{t("Status")}</dt><dd className="mt-1 font-bold capitalize text-slate-800">{statusLabel(valueOrDash(order.status))}</dd></div><div><dt className="text-slate-500">{t("Payment")}</dt><dd className="mt-1 font-bold capitalize text-slate-800">{statusLabel(valueOrDash(order.paymentStatus))}</dd></div><div className="col-span-2"><dt className="text-slate-500">{t("Method")}</dt><dd className="mt-1 font-bold text-slate-800">{t(valueOrDash(order.paymentMethod))}</dd></div></dl>
         <OrderSettlementSummary order={order} />
         {orderNote && <div className="mt-4 rounded-2xl bg-amber-50 p-4 text-sm text-amber-950"><p className="font-bold">{t("Order note")}</p><p className="mt-1 whitespace-pre-wrap">{orderNote}</p></div>}

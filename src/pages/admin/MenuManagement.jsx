@@ -15,7 +15,7 @@ import { formatCurrency } from '../../utils/currency'
 function MenuManagement() {
   const { t: uiText } = useCustomerLanguage()
 
-  const { menuItems, categories, isLoading, error } = useAdminMenu()
+  const { menuItems, categories, isLoading, error, applySavedItem } = useAdminMenu()
   const { showToast } = useToast()
   const [searchTerm, setSearchTerm] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
@@ -54,10 +54,12 @@ function MenuManagement() {
       }
 
       if (editingItem) {
-        await updateMenuItem(editingItem.id, menuItemData)
+        const saved = await updateMenuItem(editingItem.id, menuItemData)
+        applySavedItem(saved)
         showToast('Food item updated.')
       } else {
-        await createMenuItem(menuItemData)
+        const saved = await createMenuItem(menuItemData)
+        applySavedItem(saved)
         showToast('Food item created.')
       }
       setIsFormOpen(false)

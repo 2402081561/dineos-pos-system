@@ -8,12 +8,16 @@ async function request(path, { body, method = 'GET', sessionId, idempotencyKey, 
   if (!response.ok) {
     const error = new Error(data.error || 'The server could not complete this request.')
     error.status = response.status
+    if (data.newTableRequired === true && typeof data.expectedTableSessionId === 'string') {
+      error.newTableRequired = true
+      error.expectedTableSessionId = data.expectedTableSessionId
+    }
     throw error
   }
   return data
 }
 
-export async function joinCustomerTable(tableNumber, customerNickname = 'Guest') { return (await request(`/api/v1/public/tables/${encodeURIComponent(tableNumber)}/join`, { method: 'POST', body: { customerNickname } })).session }
+export async function joinCustomerTable(tableNumber, customerNickname = 'Guest', newVisit) { return (await request(`/api/v1/public/tables/${encodeURIComponent(tableNumber)}/join`, { method: 'POST', body: { customerNickname, ...newVisit } })).session }
 export async function getTakeawayQrConfig() { return request('/api/v1/public/takeaway/config') }
 export async function joinTakeawayQr(reference, requestId) { return (await request('/api/v1/public/takeaway/join', { method:'POST', body:{reference}, idempotencyKey:requestId })).session }
 export async function getCustomerSession(sessionId) {

@@ -8,9 +8,15 @@ import LanguageSwitch from '../customer/LanguageSwitch'
 import ConnectionStatus from './ConnectionStatus'
 import BrandMark from './BrandMark'
 import StaffNotificationManifest from './StaffNotificationManifest'
+import PortalPageContent from './PortalPageContent'
+import usePortalTheme from '../../hooks/usePortalTheme'
+import PortalThemeToggle from './PortalThemeToggle'
 
 function PortalLayout({ area, badgeLabel = area, showAccountControls = true, fixedMobileNavigation = false, mobileNavigationTop = false, compactMobileNavigation = false, mobileNavigation, collapsibleNavigation = false, wideWorkspace = false, containedWorkspace = false, subdued = false, floatingAction, headerAction, contentHeader, connectionWarningsOnly = false, navigationLabel = `${area} navigation`, navigation }) {
   const { t: uiText } = useCustomerLanguage()
+  const employeePortal = ['Admin', 'Cashier', 'Kitchen', 'Staff'].includes(area)
+  const { theme, toggleTheme } = usePortalTheme(employeePortal)
+  const themeControl = employeePortal ? <PortalThemeToggle theme={theme} onToggle={toggleTheme} /> : null
 
   const location = useLocation()
   const navigate = useNavigate()
@@ -35,7 +41,7 @@ function PortalLayout({ area, badgeLabel = area, showAccountControls = true, fix
           <NavLink className="flex min-w-0 flex-1 items-center gap-2 pr-2 text-base font-bold text-slate-900 sm:text-xl" title={name} to="/">
             <BrandMark decorative /><span className="truncate">{name}</span>
           </NavLink>
-          <div className="flex items-center gap-2">{showAccountControls && <span className="hidden max-w-44 truncate text-sm text-slate-500 sm:inline" title={authUser?.displayName || authUser?.email}>{authUser?.displayName || authUser?.email}</span>}<span className="rounded-full bg-orange-50 px-3 py-1 text-sm font-medium text-orange-700">{uiText(badgeLabel)}</span>{headerAction || <LanguageSwitch />}{showAccountControls && <button className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:border-orange-300 hover:text-orange-700 disabled:opacity-50" disabled={isSigningOut} aria-busy={isSigningOut || undefined} onClick={handleSignOut} type="button">{uiText("Log out")}</button>}</div>
+          <div className="flex items-center gap-2">{showAccountControls && <span className="hidden max-w-44 truncate text-sm text-slate-500 sm:inline" title={authUser?.displayName || authUser?.email}>{authUser?.displayName || authUser?.email}</span>}<span className={`rounded-full bg-orange-50 px-3 py-1 text-sm font-medium text-orange-700 ${themeControl ? 'hidden sm:inline' : ''}`}>{uiText(badgeLabel)}</span>{themeControl}{headerAction || <LanguageSwitch />}{showAccountControls && <button className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:border-orange-300 hover:text-orange-700 disabled:opacity-50" disabled={isSigningOut} aria-busy={isSigningOut || undefined} onClick={handleSignOut} type="button">{uiText("Log out")}</button>}</div>
         </div>
       </header>
       {authError && <div aria-live="polite" className={`shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-medium text-amber-800 lg:ml-56 ${containedWorkspace ? 'lg:max-h-28 lg:overflow-y-auto' : ''}`}>{uiText(authError)}</div>}
@@ -47,7 +53,7 @@ function PortalLayout({ area, badgeLabel = area, showAccountControls = true, fix
         <main className={`page-transition mx-auto w-full min-w-0 flex-1 ${containedWorkspace ? 'lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden' : ''} ${wideWorkspace ? 'max-w-[1920px]' : 'max-w-7xl'}`} key={location.pathname}>
           {contentHeader && <div className="mb-5">{contentHeader}</div>}
           <ConnectionStatus warningsOnly={connectionWarningsOnly} />
-          <Outlet />
+          <PortalPageContent><Outlet /></PortalPageContent>
         </main>
       </div>
       {floatingAction}

@@ -284,15 +284,39 @@ test('storage denial prevents sending an untraceable order; malformed success ke
 })
 
 test('counter charge lines disappear at zero and return for enabled rates', async () => {
-  const browser = browserStorage(), h = await harness()
+  const browser = browserStorage(), h = await harness(); let next
   try {
     await h.load()
     const charge = (name) => findElement(h.page(), (node) => node.type === 'dt' && JSON.stringify(node.props.children).includes(name))
     assert.equal(charge('Service charge'), null); assert.equal(charge('SST'), null)
-    h.fixture.setup.settings = { serviceChargeRate: 10, sstRate: 6 }
-    // Simulate a fresh successful menu/settings response.
-    await findElement(h.page(), (node) => node.props?.children === 'Refresh tables & menu').props.onClick(); await flush()
-    assert.ok(charge('Service charge')); assert.ok(charge('SST'))
+    h.runtime.cleanup()
+    // Re-entering the counter loads current settings without a permanent toolbar.
+    next = await harness()
+    next.fixture.setup.settings = { serviceChargeRate: 10, sstRate: 6 }
+    await next.load()
+    for (const name of ['Service charge', 'SST']) assert.ok(findElement(next.page(), node => node.type === 'dt' && JSON.stringify(node.props.children).includes(name)))
+  } finally { h.runtime.cleanup(); next?.runtime.cleanup(); browser.restore() }
+})
+
+test('compact counter keeps table visible and edits on demand without changing the draft or sending requests', async () => {
+  const browser = browserStorage(), h = await harness()
+  try {
+    await h.load()
+    const editor = () => findElement(h.page(), node => node.props?.id === 'counter-table-editor')
+    const button = label => findElement(h.page(), node => node.type === 'button' && node.props.children === label)
+    assert.equal(editor().props.hidden, true)
+    assert.equal(button('Refresh tables & menu'), null)
+    h.action('Add one Test rice').props.onClick()
+    h.input('counter-name', 'Guest A')
+    button('Edit table').props.onClick()
+    assert.equal(editor().props.hidden, false)
+    assert.equal(findElement(h.page(), node => node.props?.id === 'counter-name').props.value, 'Guest A')
+    button('Close').props.onClick()
+    assert.equal(editor().props.hidden, true)
+    assert.equal(h.fixture.requests.length, 0)
+    h.input('counter-table', '')
+    assert.equal(editor().props.hidden, false, 'No-table selection must remain visible, not a hidden required input')
+    assert.ok(h.action('Increase Test rice'), 'Opening table editor must not discard dishes')
   } finally { h.runtime.cleanup(); browser.restore() }
 })
 

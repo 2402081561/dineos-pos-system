@@ -1,7 +1,20 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { createDatabasePool, databaseUnavailable, apiErrorHandler } from '../src/databaseConnection.js'
+import { createDatabasePool, databaseUnavailable, apiErrorHandler, boundedDatabaseRead } from '../src/databaseConnection.js'
+
+test('bounded reads have a query timeout without changing global/write pool settings or retrying', async () => {
+  let calls = 0
+  const cause = new Error('Query read timeout')
+  await assert.rejects(boundedDatabaseRead({ query: async config => {
+    calls++
+    assert.deepEqual(config, { text: 'SELECT 1', values: [], query_timeout: 10000 })
+    throw cause
+  } }, 'SELECT 1'), error => error.code === 'ETIMEDOUT' && error.cause === cause && databaseUnavailable(error))
+  assert.equal(calls, 1)
+  const bug = Object.assign(new Error('syntax error'), { code: '42601' })
+  await assert.rejects(boundedDatabaseRead({ query: async () => { throw bug } }, 'SELECT 1'), error => error === bug)
+})
 
 test('pool and checked-out socket errors are handled without retrying writes or ending the pool', () => {
   const logs = []
@@ -9,6 +22,7 @@ test('pool and checked-out socket errors are handled without retrying writes or 
   const pool = createDatabasePool(FakePool, 'private-connection-string', { error: (message) => logs.push(message) })
   assert.equal(pool.options.connectionTimeoutMillis, 8000)
   assert.equal(pool.options.keepAlive, true)
+  assert.equal(pool.options.query_timeout, undefined, 'Never impose read timeout on orders/payments')
   const client = new EventEmitter()
   pool.emit('connect', client)
   const error = Object.assign(new Error('secret SQL / password'), { code: 'ECONNRESET', client: { password: 'private-password' } })

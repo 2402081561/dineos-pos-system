@@ -3,6 +3,27 @@ import test from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { hookRuntime, bundleHarness, findElement } from './helpers/hookHarness.mjs'
 
+test('new order is the first cashier action for cashiers and admins; admin back link remains separate', async () => {
+  const runtime = hookRuntime()
+  const h = await bundleHarness(`export {default as Layout} from './src/layouts/CashierLayout';export {fixture} from 'cashier-nav-fixture'`, runtime, {
+    'cashier-nav-fixture': "export const fixture={role:'cashier'}",
+    useAdminAuth: "import {fixture} from 'cashier-nav-fixture';export default ()=>({authUser:{role:fixture.role}})",
+    PortalLayout: 'export default ()=>null',
+    'react-router-dom': "export const useLocation=()=>({pathname:'/cashier'})",
+  })
+  try {
+    for (const role of ['cashier', 'admin']) {
+      h.fixture.role = role
+      const { navigation } = runtime.render(h.Layout).props
+      if (role === 'admin') assert.equal(navigation[0].to, '/admin/dashboard')
+      assert.deepEqual(navigation.filter(link => link.to.startsWith('/cashier')).map(link => link.to), [
+        '/cashier/new-order', '/cashier', '/cashier/history', '/cashier/closing', '/cashier/notifications',
+      ])
+      assert.equal(navigation.find(link => link.to === '/cashier').end, true)
+    }
+  } finally { runtime.cleanup() }
+})
+
 test('only the new-counter-order route requests the contained desktop workspace', async () => {
   const runtime = hookRuntime()
   const h = await bundleHarness(`import CashierLayout from './src/layouts/CashierLayout';import {fixture} from 'workspace-fixture';export {CashierLayout,fixture}`, runtime, {
@@ -31,6 +52,7 @@ test('actual portal contains the counter on desktop without a global mobile or r
     PortalNavigation: 'export default ()=>null',
     LanguageSwitch: 'export default ()=>null',
     BrandMark: 'export default ()=>null',
+    PortalPageContent: 'export default ({children})=>children',
   })
   const props = { area: 'Cashier', navigation: [] }
   const contained = runtime.render(h.PortalLayout, { ...props, containedWorkspace: true })

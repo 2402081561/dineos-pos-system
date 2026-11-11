@@ -1,4 +1,5 @@
 import { webcrypto } from 'node:crypto'
+import { boundedDatabaseRead } from './databaseConnection.js'
 
 export class AuthenticationUnavailableError extends Error {}
 
@@ -55,7 +56,7 @@ export function createAuthenticatedUserMiddleware({ verifyToken, pool }) {
     // A valid JWT followed by a failed database read is a server failure, not
     // invalid credentials. Let the normal error handler return a server error.
     try {
-      const { rows } = await pool.query('SELECT id, email, display_name AS "displayName", role FROM users WHERE auth_user_id = $1', [claims.sub])
+      const { rows } = await boundedDatabaseRead(pool, 'SELECT id, email, display_name AS "displayName", role FROM users WHERE auth_user_id = $1', [claims.sub])
       if (!rows[0]) return response.status(403).json({ error: 'This account has not been assigned a DineOS role. Sign out and sign in again after the account is provisioned.' })
       request.user = rows[0]
       return next()

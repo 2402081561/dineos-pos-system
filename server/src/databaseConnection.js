@@ -1,6 +1,24 @@
 const networkCodes = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EADDRNOTAVAIL', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE', '57P01', '57P02', '57P03', '53300'])
 const connectionMessages = new Set(['Connection terminated unexpectedly', 'Connection terminated', 'Connection terminated due to connection timeout', 'timeout exceeded when trying to connect', 'Client has encountered a connection error and is not queryable', 'Client was closed and is not queryable'])
 
+// Only fixed, read-only identity/health queries use this bound. Keep it off the
+// shared pool: applying it to orders/payments could leave uncertain writes.
+export const databaseReadTimeoutMs = 10000
+export async function boundedDatabaseRead(pool, text, values = []) {
+  try {
+    // pool.query releases with an error on timeout, discarding that connection.
+    // Promise.race alone would leave a stalled query occupying the pool.
+    return await pool.query({ text, values, query_timeout: databaseReadTimeoutMs })
+  } catch (cause) {
+    if (cause?.message === 'Query read timeout') {
+      const error = new Error('Database read timed out', { cause })
+      error.code = 'ETIMEDOUT'
+      throw error
+    }
+    throw cause
+  }
+}
+
 export function databaseUnavailable(error, seen = new Set()) {
   if (!error || typeof error !== 'object' || seen.has(error)) return false
   seen.add(error)

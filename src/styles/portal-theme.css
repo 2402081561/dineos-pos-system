@@ -1,0 +1,80 @@
+/* Employee-portal palette for existing portal utilities, including body-mounted
+   dialogs. No filters/inversion: food images, QR codes and brand art stay intact.
+   Screen-only rules leave receipts and browser printing in their light palette. */
+@media screen {
+  html[data-portal-theme='dark'] {
+    color-scheme: dark;
+    --portal-canvas: #101722;
+    --portal-surface: #192332;
+    --portal-raised: #223044;
+    --portal-line: #334155;
+    --portal-ink: #edf2f8;
+    --portal-muted: #b5c2d4;
+    --portal-subtle: #95a7bf;
+    background: var(--portal-canvas);
+  }
+
+  html[data-portal-theme='dark'] body { background: var(--portal-canvas); color: var(--portal-ink); }
+  html[data-portal-theme='dark'] :is(.surface-card, .interactive-card, [class~='border'], [class~='border-t'], [class~='border-b']) { border-color: var(--portal-line); }
+  html[data-portal-theme='dark'] :is(.bg-white, .surface-card, .interactive-card) { background-color: var(--portal-surface); }
+  html[data-portal-theme='dark'] :is([class~='bg-white/95'], [class~='lg:bg-white']) { background-color: var(--portal-surface); }
+  html[data-portal-theme='dark'] :is(.bg-slate-50, [class~='bg-slate-50/80'], [class~='bg-slate-50/50'], [class~='bg-[#fffaf7]']) { background-color: var(--portal-canvas); }
+  html[data-portal-theme='dark'] :is(.bg-slate-100, .bg-slate-200, .skeleton) { background-color: var(--portal-raised); }
+
+  html[data-portal-theme='dark'] :is(.text-slate-900, .text-slate-800, .text-slate-700) { color: var(--portal-ink); }
+  html[data-portal-theme='dark'] .text-slate-600 { color: var(--portal-muted); }
+  html[data-portal-theme='dark'] :is(.text-slate-500, .text-slate-400) { color: var(--portal-subtle); }
+  html[data-portal-theme='dark'] :is(.border-slate-100, .border-slate-200, .border-slate-300, [class~='border-slate-200/70'], [class~='border-slate-200/80'], [class~='lg:border-slate-200/70']) { border-color: var(--portal-line); }
+  html[data-portal-theme='dark'] :is(.divide-slate-100, .divide-slate-200) > :not([hidden]) ~ :not([hidden]) { border-color: var(--portal-line); }
+
+  html[data-portal-theme='dark'] :is(input:not([type='checkbox']):not([type='radio']):not([type='file']), textarea, select, option) {
+    background-color: var(--portal-canvas);
+    border-color: var(--portal-line);
+    color: var(--portal-ink);
+  }
+  html[data-portal-theme='dark'] :is(input, textarea)::placeholder { color: var(--portal-subtle); }
+  html[data-portal-theme='dark'] :is(input, textarea, select):focus {
+    border-color: #fb923c;
+    --tw-ring-color: rgb(251 146 60 / 20%);
+  }
+  html[data-portal-theme='dark'] :is(input, textarea, select):disabled { background-color: var(--portal-raised); color: var(--portal-subtle); }
+  html[data-portal-theme='dark'] input:-webkit-autofill { -webkit-text-fill-color: var(--portal-ink); box-shadow: 0 0 0 1000px var(--portal-canvas) inset; }
+
+  /* Semantic states keep their meaning, with low-glare fills and readable ink. */
+  html[data-portal-theme='dark'] :is(.bg-orange-50, .bg-orange-100, [class~='bg-orange-50/30'], [class~='bg-orange-50/50'], [class~='bg-orange-50/60']) { background-color: #39291f; }
+  html[data-portal-theme='dark'] :is(.text-orange-600, .text-orange-700, .text-orange-800, .text-orange-900, .text-orange-950, .eyebrow) { color: #ffb479; }
+  html[data-portal-theme='dark'] :is(.border-orange-100, .border-orange-200, .border-orange-300) { border-color: #77502e; }
+  html[data-portal-theme='dark'] :is(.border-orange-400, .border-orange-500, .border-orange-600) { border-color: #f97316; }
+  html[data-portal-theme='dark'] :is(.bg-emerald-50, .bg-green-50, .bg-emerald-100) { background-color: #14372f; }
+  html[data-portal-theme='dark'] :is(.text-emerald-600, .text-emerald-700, .text-emerald-800, .text-emerald-900, .text-green-700) { color: #75dfbd; }
+  html[data-portal-theme='dark'] :is(.border-emerald-100, .border-emerald-200, .border-emerald-300) { border-color: #2b6556; }
+  html[data-portal-theme='dark'] .border-emerald-400 { border-color: #34d399; }
+  html[data-portal-theme='dark'] :is(.bg-amber-50, .bg-amber-100, .bg-yellow-50) { background-color: #382e1b; }
+  html[data-portal-theme='dark'] :is(.text-amber-700, .text-amber-800, .text-amber-900, .text-amber-950) { color: #f8d27b; }
+  html[data-portal-theme='dark'] :is(.border-amber-100, .border-amber-200, .border-amber-300) { border-color: #776235; }
+  html[data-portal-theme='dark'] :is(.bg-red-50, .bg-red-100, .bg-rose-50) { background-color: #3c242d; }
+  html[data-portal-theme='dark'] :is(.text-red-600, .text-red-700, .text-red-800) { color: #ffa3ad; }
+  html[data-portal-theme='dark'] :is(.border-red-100, .border-red-200, .border-red-300) { border-color: #7f4551; }
+  html[data-portal-theme='dark'] :is(.bg-blue-50, .bg-blue-100, .bg-sky-50) { background-color: #1b304c; }
+  html[data-portal-theme='dark'] :is(.text-blue-600, .text-blue-700, .text-blue-800, .text-blue-900, .text-sky-700, .text-sky-900) { color: #9ecbff; }
+  html[data-portal-theme='dark'] .border-sky-200 { border-color: #3e6188; }
+  html[data-portal-theme='dark'] :is(.bg-violet-50, .bg-purple-50) { background-color: #302743; }
+  html[data-portal-theme='dark'] :is(.text-violet-600, .text-violet-700, .text-violet-800, .text-violet-900, .text-purple-700) { color: #d1b7ff; }
+  html[data-portal-theme='dark'] .border-violet-200 { border-color: #63517f; }
+
+  /* Hover variants must override themed base fills instead of flashing white. */
+  html[data-portal-theme='dark'] :is([class~='hover:bg-white'], [class~='hover:bg-slate-50'], [class~='hover:bg-slate-100']):hover { background-color: var(--portal-raised); }
+  html[data-portal-theme='dark'] :is([class~='hover:bg-orange-50'], [class~='hover:bg-orange-100'], [class~='hover:bg-orange-50/30'], [class~='hover:bg-orange-50/40']):hover { background-color: #463023; }
+  html[data-portal-theme='dark'] [class~='hover:text-slate-700']:hover { color: var(--portal-ink); }
+  html[data-portal-theme='dark'] [class~='hover:text-orange-700']:hover { color: #ffd0a8; }
+  html[data-portal-theme='dark'] :is([class~='hover:border-orange-200'], [class~='hover:border-orange-300']):hover { border-color: #d58c50; }
+  html[data-portal-theme='dark'] [class~='hover:border-emerald-400']:hover { border-color: #34d399; }
+
+  html[data-portal-theme='dark'] :is(.ring-orange-100, .ring-orange-200, .ring-orange-300) { --tw-ring-color: rgb(251 146 60 / 30%); }
+  html[data-portal-theme='dark'] .ring-emerald-100 { --tw-ring-color: rgb(52 211 153 / 25%); }
+  html[data-portal-theme='dark'] .ring-slate-200 { --tw-ring-color: var(--portal-line); }
+  html[data-portal-theme='dark'] [class~='focus:ring-offset-2']:focus { --tw-ring-offset-color: var(--portal-surface); }
+  html[data-portal-theme='dark'] .receipt-preview { background: var(--portal-canvas); }
+  /* Preview the real white paper, not a darkened imitation of printed output. */
+  html[data-portal-theme='dark'] :is(.thermal-receipt, .kitchen-ticket-paper) { color-scheme: light; background: #fff; color: #111; }
+}

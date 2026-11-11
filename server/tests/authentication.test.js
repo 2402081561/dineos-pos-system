@@ -16,8 +16,9 @@ test('valid authentication preserves identity and provisioned roles; missing rol
   const req = request()
   const res = response()
   let nextCalls = 0
-  await middleware(async () => ({ sub: 'auth-1' }), async (sql, params) => {
-    assert.deepEqual(params, ['auth-1']); assert.match(sql, /WHERE auth_user_id = \$1/)
+  await middleware(async () => ({ sub: 'auth-1' }), async (config) => {
+    assert.deepEqual(config.values, ['auth-1']); assert.match(config.text, /WHERE auth_user_id = \$1/)
+    assert.equal(config.query_timeout, 10000)
     return { rows: [user] }
   })(req, res, () => { nextCalls++ })
   assert.equal(req.user, user)

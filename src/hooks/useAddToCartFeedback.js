@@ -4,8 +4,6 @@ import useCart from './useCart'
 import useToast from './useCustomerToast'
 import { isMenuItemOrderable } from '../services/orderService'
 
-const wait = (duration) => new Promise((resolve) => setTimeout(resolve, duration))
-
 function useAddToCartFeedback() {
   const { addToCart, isCartLocked, getLastCartError } = useCart()
   const { showToast } = useToast()
@@ -13,11 +11,13 @@ function useAddToCartFeedback() {
   const [status, setStatus] = useState('idle')
   const isAddingRef = useRef(false)
   const isMountedRef = useRef(true)
+  const feedbackTimer = useRef(null)
 
   useEffect(() => {
     isMountedRef.current = true
     return () => {
       isMountedRef.current = false
+      clearTimeout(feedbackTimer.current)
     }
   }, [])
 
@@ -33,25 +33,25 @@ function useAddToCartFeedback() {
     setStatus('adding')
 
     try {
-      await wait(150)
-      if (!isMountedRef.current) return
       if (!addToCart(menuItem, quantity, specialInstructions, selections, orderType)) throw new Error(getLastCartError?.() || 'Please review the dish options and quantity.')
       if (isMountedRef.current) setStatus('added')
       showToast('✅ Added to Cart', 'success', {
         detail: `${menuItem.name} × ${quantity}`,
         action: { label: 'View Cart', onClick: () => navigate('/cart') },
       })
-      await wait(1000)
+      clearTimeout(feedbackTimer.current)
+      // Display feedback without delaying the mutation or locking repeat taps.
+      feedbackTimer.current = setTimeout(() => { if (isMountedRef.current) setStatus('idle') }, 1000)
     } catch (error) {
       console.error('[Cart] Failed to add item:', error)
       showToast(error.message || 'Unable to add item to cart.', 'error')
-    } finally {
       if (isMountedRef.current) setStatus('idle')
+    } finally {
       isAddingRef.current = false
     }
   }
 
-  return { addItem, isAdding: status === 'adding', isAdded: status === 'added', isBusy: status !== 'idle' || Boolean(isCartLocked) }
+  return { addItem, isAdding: status === 'adding', isAdded: status === 'added', isBusy: status === 'adding' || Boolean(isCartLocked) }
 }
 
 export default useAddToCartFeedback

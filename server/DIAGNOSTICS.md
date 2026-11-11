@@ -5,7 +5,9 @@ This instrumentation is diagnostic only, not a fix for the November 8 connection
 ## Two distinct probes
 
 - `GET /livez`: minimal `{ "status": "ok" }`, no database/auth dependency, `Cache-Control: no-store`. It proves only that the HTTP application can respond.
-- `GET /health`: unchanged database-aware readiness check. Keep this as the existing Render health-check path. Do not replace it with `/livez`: a live process may still have an unavailable database.
+- `GET /health`: unchanged database-aware readiness check. A 200 from `/livez` does not imply this probe succeeds.
+
+On November 9, following repeated idle/wake failures even with push disabled, the owner authorized continued remediation. Render's platform health-check path was changed from `/health` to `/livez` as a controlled attempt to separate process admission from external-DB readiness. This causes Render to admit a live HTTP process even if its DB is temporarily unavailable; business routes must continue to reject/handle DB failures normally, and operators must still check `/health`. This change is not a proven fix until an idle/wake test passes. It is a dashboard setting, not automatically applied by this repository.
 
 ## Log signals
 

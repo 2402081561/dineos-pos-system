@@ -4,7 +4,7 @@ export const tableStatusLabels = {
   occupied: 'Occupied',
   ordering: 'Ordering',
   awaiting_payment: 'Payment due',
-  ready_to_clear: 'Ready to clear',
+  ready_to_clear: 'Bill settled',
   inactive: 'Disabled',
 }
 

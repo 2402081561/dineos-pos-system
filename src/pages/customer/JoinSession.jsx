@@ -25,31 +25,49 @@ function JoinSession() {
   const [isJoining, setIsJoining] = useState(false)
   const joining = useRef(false)
   const pendingVisit = useRef(null)
+  const [newVisit, setNewVisit] = useState(null)
+  const [newVisitError, setNewVisitError] = useState('')
 
-  async function sharedTableSession({ guestOnly = false } = {}) {
+  async function joinOrConfirm(confirmedNewVisit, currentSession = null) {
+    try { return await joinTableSession({ tableNumber, customerNickname: 'Shared Table', newVisit: confirmedNewVisit }) }
+    catch (failure) {
+      if (failure.newTableRequired) {
+        setNewVisitError('')
+        setNewVisit({ expectedTableSessionId: failure.expectedTableSessionId, newTableSessionId: crypto.randomUUID(), currentSession })
+      }
+      throw failure
+    }
+  }
+
+  async function sharedTableSession({ guestOnly = false, confirmedNewVisit = null } = {}) {
     if (!/^[1-9]\d*$/.test(tableNumber)) throw new Error('Please scan the QR code on your table to begin.')
     // Reuse this visit if the membership response was lost. Sending the email
     // itself must not create/clear a table visit or discard an existing cart.
     const candidate = pendingVisit.current ?? session
-    if (String(candidate?.tableNumber) === tableNumber && (!guestOnly || candidate.isSharedTable)) {
-      try { await getCustomerSession(candidate.sessionId); return candidate }
+    if (!confirmedNewVisit && String(candidate?.tableNumber) === tableNumber && (!guestOnly || candidate.isSharedTable)) {
+      try {
+        await getCustomerSession(candidate.sessionId)
+        await joinOrConfirm(null, candidate)
+        return candidate
+      }
       catch (e) { if (e.status !== 401) throw e; pendingVisit.current = null; if (session) await clearSession() }
-    } else if (session) await clearSession()
-    const next = await joinTableSession({ tableNumber, customerNickname: 'Shared Table' })
+    } else if (session && !confirmedNewVisit) await clearSession()
+    const next = await joinOrConfirm(confirmedNewVisit)
     pendingVisit.current = next
     return next
   }
   function activateSession(nextSession) {
     return startSession(tableNumber, nextSession.customerNickname, nextSession.tableSessionId, nextSession.sessionId, nextSession.memberId, nextSession.isSharedTable)
   }
-  async function continueAsGuest() {
+  async function continueAsGuest(confirmedNewVisit = null) {
     if (joining.current) return
     joining.current = true
     try {
       setIsJoining(true); setError('')
-      activateSession(await sharedTableSession({ guestOnly: true }))
+      if (confirmedNewVisit && session && customerVisitStorage.readDraft(session).items.length > 0) throw new Error('Please finish or clear your current cart before starting a new table.')
+      activateSession(await sharedTableSession({ guestOnly: true, confirmedNewVisit }))
       navigate('/menu', { replace: true })
-    } catch (e) { setError(e.message || 'We could not join this table right now. Please try again.') }
+    } catch (e) { setError(e.message || 'We could not join this table right now. Please try again.'); if (confirmedNewVisit) setNewVisitError(e.message) }
     finally { joining.current = false; setIsJoining(false) }
   }
   function completed(result) {
@@ -77,7 +95,7 @@ function JoinSession() {
     <div className="p-6 sm:p-8">
       {(error || sessionError) && <p className="mb-4 rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-700" role="alert">{t(error || sessionError)}</p>}
       {mode === 'welcome' && <div className="space-y-3">
-        <Button className="w-full py-3.5" disabled={isJoining} onClick={continueAsGuest}>{isJoining ? t('Opening your table...') : t('Continue as Guest')}</Button>
+        <Button className="w-full py-3.5" disabled={isJoining} onClick={() => continueAsGuest()}>{isJoining ? t('Opening your table...') : t('Continue as Guest')}</Button>
         <Button className="w-full py-3.5" disabled={isJoining || !membership.enabled} onClick={() => changeMode('login')} variant="outline">{t('Member Login')}</Button>
         <button className="min-h-11 w-full rounded-xl px-4 py-2.5 text-sm font-bold text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={isJoining || !membership.enabled} onClick={() => changeMode('register')} type="button">{t('Create Membership')}</button>
         {!membership.enabled && <p role="status" className="rounded-xl bg-slate-50 p-3 text-center text-xs leading-5 text-slate-600">{t(membership.isLoading ? 'Checking membership availability...' : 'Member email login is not available yet. You can still order as Guest.')}</p>}
@@ -91,6 +109,12 @@ function JoinSession() {
         <Button className="mt-6 w-full py-3.5" onClick={() => navigate('/menu', { replace: true })}>{t('Start Ordering')}</Button>
       </div>}
     </div>
-  </div></div>
+  </div>{newVisit && <div className="mt-4 rounded-2xl border border-orange-200 bg-white p-5" role="region" aria-label={t('Start a new table?')}>
+    <h2 className="font-bold">{t('Start a new table?')}</h2><p className="mt-2 text-sm text-slate-600">{t('The previous bill is settled. Confirm that the previous guests have finished and you are a new group. Old orders and receipts remain saved.')}</p>
+    {newVisitError && <p role="alert" className="mt-3 text-sm text-red-700">{t(newVisitError)}</p>}
+    <Button className="mt-4 w-full" disabled={isJoining} onClick={() => continueAsGuest({ expectedTableSessionId: newVisit.expectedTableSessionId, newTableSessionId: newVisit.newTableSessionId })}>{t(isJoining ? 'Opening your table...' : 'Start new table')}</Button>
+    {newVisit.currentSession && <Button className="mt-2 w-full" variant="outline" disabled={isJoining} onClick={() => { activateSession(newVisit.currentSession); navigate('/menu', { replace: true }) }}>{t('Continue current table')}</Button>}
+    <button className="mt-3 w-full text-sm text-slate-500" disabled={isJoining} onClick={() => setNewVisit(null)} type="button">{t('Cancel')}</button>
+  </div>}</div>
 }
 export default JoinSession

@@ -33,7 +33,7 @@ export function buildKitchenTicket(order, { tableLabel = '', reference = '', t =
       row(`${item.quantity}× ${name}`, 'bold')
       const options = (item.optionSnapshot ?? []).flatMap((group) => (group.options ?? []).map((option) => option.label)).filter(Boolean).join('、')
       if (options) row(options)
-      if (item.notes) row(`${t('Notes')}: ${item.notes}`, 'bold')
+      if (item.notes) row(`${t('Notes')}: ${item.notes}`)
     }
     printedGroup = true
   }

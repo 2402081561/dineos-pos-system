@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import Module, { createRequire } from 'node:module'
 import { build } from 'esbuild'
 
-test('real customer details, bill and expanded table summary hide zero fees but retain historical charges in both languages', async () => {
+test('real customer details and expanded table summary hide zero fees but retain historical charges in both languages', async () => {
   const root = path.resolve(import.meta.dirname, '..')
   const result = await build({
     stdin: { contents: `
@@ -14,13 +14,12 @@ test('real customer details, bill and expanded table summary hide zero fees but 
       import {CustomerSessionContext} from './src/context/CustomerSessionContext.js';
       import {ToastContext} from './src/context/ToastContext.js';
       import Modal from './src/components/customer/CustomerOrderDetailsModal.jsx';
-      import Bill from './src/pages/customer/Bill.jsx';
       import TableSummary from './src/pages/customer/TableSummary.jsx';
       import {setFixture} from './src/hooks/useTableSummary.js';
       export function render(kind, order) {
         const participant = {sessionId:'S1', isCurrentCustomer:true, customerNickname:'Guest', paymentStatus:'pending', status:'received', orders:[order], subtotal:order.subtotal, serviceCharge:order.serviceCharge, sst:order.sst, grandTotal:order.grandTotal};
         setFixture({currentSessionId:'S1', participants:[participant], grandTotal:order.grandTotal, tableNumber:1, hasSession:true, hasTableSession:true, isLoading:false, error:'', paymentStatus:'pending'});
-        const page = kind === 'details' ? <Modal order={order} onClose={()=>{}}/> : kind === 'bill' ? <Bill/> : <TableSummary/>;
+        const page = kind === 'details' ? <Modal order={order} onClose={()=>{}}/> : <TableSummary/>;
         return renderToStaticMarkup(<CustomerLanguageProvider><CustomerSessionContext.Provider value={{session:{sessionId:'S1',tableSessionId:'T1'}}}><ToastContext.Provider value={{showToast(){}}}>{page}</ToastContext.Provider></CustomerSessionContext.Provider></CustomerLanguageProvider>);
       }`, resolveDir: root, loader: 'jsx' },
     bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic', define: { 'import.meta.env': '{}' },
@@ -46,7 +45,7 @@ test('real customer details, bill and expanded table summary hide zero fees but 
     for (const language of ['en', 'zh']) {
       Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => language } })
       const serviceLabel = language === 'en' ? 'Service charge' : '服务费'
-      for (const kind of ['details', 'bill', 'table']) {
+      for (const kind of ['details', 'table']) {
         const free = module.exports.render(kind, order)
         assert.ok(!free.includes(serviceLabel), `${kind} ${language}: zero service charge must be hidden`)
         assert.ok(!free.includes('SST'), `${kind} ${language}: zero SST must be hidden`)

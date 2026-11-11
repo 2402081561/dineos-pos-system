@@ -5,13 +5,16 @@ export function watchOrderDetails(load, onChange, { schedule = setTimeout, cance
   let pending = null
   let timer
   let order = null
+  let controller
   function refresh() {
     if (!active || pending) return pending
     cancel(timer)
+    controller = new AbortController()
+    const signal = controller.signal
     // Keep a failed read visible until it actually succeeds. In particular,
     // retrying must not briefly re-enable printing from a stale paid snapshot.
     if (!order) onChange({ order: null, isLoading: true, error: '' })
-    pending = Promise.resolve().then(load).then((result) => {
+    pending = Promise.resolve().then(() => active ? load(signal) : undefined).then((result) => {
       if (!active) return
       order = result
       onChange({ order, isLoading: false, error: '' })
@@ -19,10 +22,11 @@ export function watchOrderDetails(load, onChange, { schedule = setTimeout, cance
       if (active) onChange({ order, isLoading: false, error: error.message || 'Order details unavailable' })
     }).finally(() => {
       pending = null
+      controller = null
       if (active) timer = schedule(refresh, interval)
     })
     return pending
   }
   void refresh()
-  return { refresh, stop() { active = false; cancel(timer) } }
+  return { refresh, stop() { active = false; controller?.abort(); cancel(timer) } }
 }

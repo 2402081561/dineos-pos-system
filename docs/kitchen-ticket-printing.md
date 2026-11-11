@@ -21,3 +21,21 @@ Hardware acceptance after deploying frontend and installing the updated APK:
 5. Reprint deliberately, then verify a paid customer receipt still prints normally.
 
 On 2026-10-20, with user approval, migration 031 was applied to the configured Supabase database after a new private local backup. Signatures of all 23 existing application tables (excluding the new alias field) were unchanged. A rollback-only alias round-trip verified the actual kitchen SELECT and print payload, leaving no test alias behind. The local API was restarted using `npm --prefix server run dev` to enable code watching. No Netlify/Render deployment or Git push was performed. Actual new kitchen-ticket hardware output still requires user testing.
+# Kitchen paper readability — local revision, 11 November 2026
+
+The browser preview/print layout separates quantity and dish name into aligned
+columns. Options and notes are smaller, indented below their own dish. Chinese
+UI prints `备注` rather than `Notes`. Names are never automatically shortened:
+an explicit saved kitchen name takes precedence; otherwise the full original
+name is preserved. Remarks, including ambiguous remarks, are not reinterpreted.
+
+The dialog keeps its order number outside the printed paper, shows optional
+print labels in a disclosure, and keeps print controls below the scrollable
+preview. Existing saved-identifier readiness checks still apply when enabled;
+the label editor does not assign/move a table.
+
+Android Print Helper v0.3.0 remains supported through the unchanged v1 row
+protocol. It still renders its own inline quantity/name layout, not the browser's
+CSS columns; note rows now use normal rather than bold type. No helper APK was
+rebuilt in this revision. Browser preview checks and tests are not a physical
+printer acceptance test. This local revision is not a deployment record.

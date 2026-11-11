@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { subscribeToSupabaseAdminMenu } from '../services/adminApiService'
 
 function useAdminMenu() {
@@ -6,6 +6,7 @@ function useAdminMenu() {
   const [categories, setCategories] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
+  const feed = useRef(null)
 
   useEffect(() => {
     let isMounted = true
@@ -28,13 +29,22 @@ function useAdminMenu() {
       },
     )
 
+    feed.current = unsubscribe
     return () => {
+      feed.current = null
       isMounted = false
       unsubscribe()
     }
   }, [])
 
-  return { menuItems, categories, isLoading, error }
+  const applySavedItem = useCallback((item) => {
+    if (!item?.id) return
+    feed.current?.invalidate?.()
+    setMenuItems(current => current.some(entry => entry.id === item.id) ? current.map(entry => entry.id === item.id ? { ...entry, ...item } : entry) : [...current, item])
+    void feed.current?.refreshLatest?.()
+  }, [])
+
+  return { menuItems, categories, isLoading, error, applySavedItem }
 }
 
 export default useAdminMenu

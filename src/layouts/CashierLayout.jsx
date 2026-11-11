@@ -3,8 +3,8 @@ import useAdminAuth from '../hooks/useAdminAuth'
 import { useLocation } from 'react-router-dom'
 
 const cashierNavigation = [
-  { end: true, label: 'Dashboard', to: '/cashier' },
   { label: 'New order', to: '/cashier/new-order' },
+  { end: true, label: 'Dashboard', to: '/cashier' },
   { label: 'Receipt history', to: '/cashier/history' },
   { label: 'Shift closing', to: '/cashier/closing' },
   { label: 'Order notifications', to: '/cashier/notifications' },

@@ -1,5 +1,6 @@
 // UI copy only: menu names, categories, notes and member names stay as entered.
 export const customerChinese = {
+  'Customer accounts will be available here later.': '这里之后会提供顾客账号功能。',
   'Submit your order': '提交您的订单',
   'Order received': '订单已收到',
   'Unpaid': '未付款',
