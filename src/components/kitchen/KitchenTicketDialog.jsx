@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import OrderIdentifiers from '../common/OrderIdentifiers'
 import { hasSavedTableVisitTools } from '../../utils/deploymentFeatures'
-import { createPortal } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { buildKitchenTicket } from '../../utils/kitchenTicket'
 import { androidReceiptIntent, isAndroidPrintDevice } from '../../utils/androidReceiptPrint'
@@ -11,6 +11,7 @@ export default function KitchenTicketDialog({ order, onClose }) {
   const { t } = useCustomerLanguage()
   const [identifiers,setIdentifiers]=useState({ticketSeat:'',ticketReference:'',canPrint:false})
   const [message, setMessage] = useState('')
+  const [printedAt, setPrintedAt] = useState(() => new Date())
   const dialogRef = useRef(null)
   useEffect(() => {
     const previous = document.activeElement
@@ -19,10 +20,31 @@ export default function KitchenTicketDialog({ order, onClose }) {
     dialogRef.current?.querySelector('button')?.focus()
     return () => { document.body.style.overflow = overflow; previous?.focus?.() }
   }, [])
+  useEffect(() => {
+    // Also refresh the paper when the browser's own Print command is used.
+    const refreshPrintTime = () => flushSync(() => setPrintedAt(new Date()))
+    window.addEventListener('beforeprint', refreshPrintTime)
+    return () => window.removeEventListener('beforeprint', refreshPrintTime)
+  }, [])
   let ticket
-  try { ticket = buildKitchenTicket(order, { tableLabel:identifiers.ticketSeat, reference:identifiers.ticketReference, t }) } catch { /* Invalid snapshots cannot print. */ }
+  try { ticket = buildKitchenTicket(order, { tableLabel:identifiers.ticketSeat, reference:identifiers.ticketReference, printedAt, t }) } catch { /* Invalid snapshots cannot print. */ }
   const android = isAndroidPrintDevice(navigator.userAgent)
   const canPrint = Boolean(ticket && (order?.pickupCode || !hasSavedTableVisitTools || identifiers.canPrint))
+  const printTicket = (browser = false) => {
+    if (!canPrint) return
+    try {
+      const now = new Date()
+      const currentTicket = buildKitchenTicket(order, { tableLabel: identifiers.ticketSeat, reference: identifiers.ticketReference, printedAt: now, t })
+      // Commit the new timestamp before the browser captures the printed DOM.
+      flushSync(() => setPrintedAt(now))
+      if (android && !browser) {
+        window.location.assign(androidReceiptIntent(currentTicket))
+        setMessage(t('Check the helper and paper before reprinting.'))
+      } else window.print()
+    } catch {
+      setMessage(t('Kitchen ticket unavailable.'))
+    }
+  }
   return createPortal(<div ref={dialogRef} onKeyDown={(event) => {
     if (event.key === 'Escape') onClose()
     if (event.key !== 'Tab') return
@@ -46,10 +68,7 @@ export default function KitchenTicketDialog({ order, onClose }) {
       <div className="kitchen-print-controls shrink-0 border-t border-slate-100 px-5 py-4">
         {android && <p className="mb-3 text-xs text-slate-500">{t('Kitchen printing requires Print Helper v0.3.0 or later.')}</p>}
         {(message || !ticket || (hasSavedTableVisitTools && !canPrint)) && <p className="mb-3 text-sm text-amber-800" role="status">{!ticket ? t('Kitchen ticket unavailable.') : message || t('Review print labels before printing.')}</p>}
-        <div className="flex gap-2"><button disabled={!canPrint} className="min-h-11 flex-1 rounded-xl bg-orange-600 px-4 py-3 text-sm font-bold text-white hover:bg-orange-700 disabled:opacity-40" type="button" onClick={() => {
-          if (android) { window.location.assign(androidReceiptIntent(ticket)); setMessage(t('Check the helper and paper before reprinting.')) }
-          else window.print()
-        }}>{t('Print kitchen ticket')}</button>{android && <button disabled={!canPrint} type="button" onClick={() => window.print()}>{t('Print / Save PDF')}</button>}</div>
+        <div className="flex gap-2"><button disabled={!canPrint} className="min-h-11 flex-1 rounded-xl bg-orange-600 px-4 py-3 text-sm font-bold text-white hover:bg-orange-700 disabled:opacity-40" type="button" onClick={() => printTicket()}>{t('Print kitchen ticket')}</button>{android && <button disabled={!canPrint} type="button" onClick={() => printTicket(true)}>{t('Print / Save PDF')}</button>}</div>
       </div>
     </div>
   </div>, document.body)

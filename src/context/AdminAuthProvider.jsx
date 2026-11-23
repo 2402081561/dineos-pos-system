@@ -4,12 +4,15 @@ import { restoreSupabaseUser, signInSupabaseUser, signOutSupabaseAdmin, subscrib
 import { recoverStaffSession } from '../utils/staffSessionRecovery'
 import { authenticatedApiRequest } from '../services/supabaseAuthService'
 import { disableOrderNotifications } from '../utils/orderNotifications'
+import { watchStaffLoginActivity } from '../services/supabaseAuthService'
 
 function AdminAuthProvider({ children }) {
   const [adminUser, setAdminUser] = useState(null)
   const [authUser, setAuthUser] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [authError, setAuthError] = useState('')
+
+  useEffect(() => watchStaffLoginActivity(), [])
 
   useEffect(() => {
     let active = true

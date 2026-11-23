@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { buildKitchenTicket } from '../src/utils/kitchenTicket.js'
+import { createCustomerI18n, translateCustomerText } from '../src/i18n/customerLanguage.js'
 import { bundleHarness, hookRuntime, findElement } from './helpers/hookHarness.mjs'
 
 const original = { orderNumber: 'preview-001', status: 'ready', createdAt: '2026-11-10T12:00:00Z', isWalkIn: true, orderType: 'mixed', items: [
@@ -50,4 +51,14 @@ test('paper and dialog keep scrolling controls out of browser print output', () 
   assert.match(css, /\.kitchen-ticket-name\s*\{[^}]*font-size: 16px/, 'Keep the readable dish size while reducing whitespace')
   assert.match(css, /\.kitchen-print-content\s*\{[^}]*overflow: visible !important/)
   assert.match(css, /\.kitchen-print-controls\s*\{\s*display: none !important/)
+})
+
+test('the translated print-time footer is small metadata, not a dish, warning or order time', async () => {
+  const { Paper } = await bundleHarness("export {default as Paper} from './src/components/kitchen/KitchenTicketPaper.jsx'", hookRuntime())
+  const language = createCustomerI18n('zh')
+  const ticket = buildKitchenTicket(original, { printedAt: '2026-11-12T17:30:00Z', t: value => translateCustomerText(language, value) })
+  const footer = Paper({ ticket }).props.children.at(-1)
+  assert.equal(footer.props.className, 'kitchen-ticket-meta')
+  assert.equal(footer.props.children, '打印时间: 13/11/2026 01:30:00')
+  assert.equal(translateCustomerText(createCustomerI18n('en'), 'Printed at'), 'Printed at')
 })

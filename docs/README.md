@@ -11,6 +11,7 @@ These documents include implementation guides, local trials and historical relea
 
 ## Integrations and diagnostics
 
+- [Technical overview and local development](development.md)
 - [Employee portal light / dark mode](portal-appearance.md)
 - [Backend setup and migration guidance](../server/README.md)
 - [Connection recovery](connection-recovery.md)

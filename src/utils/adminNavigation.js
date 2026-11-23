@@ -12,6 +12,7 @@ const adminNavigation = [
   { label: 'Rewards', to: '/admin/rewards', group: 'Menu & customers' },
   { label: 'Audit log', to: '/admin/audit-log', group: 'Shop management' },
   { label: 'Shop settings', to: '/admin/settings', group: 'Shop management' },
+  { label: 'Account settings', to: '/admin/account-settings', group: 'Shop management' },
   { label: 'Order notifications', to: '/cashier/notifications', group: 'Shop management' },
 ]
 export default adminNavigation

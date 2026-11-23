@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -25,6 +25,7 @@ test('isolated PostgreSQL: registration/outbox atomicity, safe recovery and sing
     await pool.query('CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN')
     const dbdir = new URL('../db/', import.meta.url)
     for (const file of readdirSync(dbdir).filter(file => /^\d{3}.*\.sql$/.test(file)).sort()) await pool.query(readFileSync(new URL(file, dbdir), 'utf8'))
+    await pool.query(`UPDATE shop_settings SET config = config || '{"membershipEnabled":true}'::jsonb WHERE id=1`)
     assert.equal((await pool.query("SELECT has_table_privilege('anon','member_welcome_emails','SELECT') AS allowed")).rows[0].allowed, false)
     assert.equal((await pool.query("SELECT relrowsecurity FROM pg_class WHERE oid='member_welcome_emails'::regclass")).rows[0].relrowsecurity, true)
     const tableId = randomUUID(), visitId = randomUUID(), guestId = randomUUID()
@@ -56,6 +57,30 @@ test('isolated PostgreSQL: registration/outbox atomicity, safe recovery and sing
     assert.equal(first.code, 200); assert.equal(first.body.welcomeEmail.status, 'queued')
     assert.equal(duplicate.body.member.id, first.body.member.id)
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM member_welcome_emails')).rows[0].n, 1)
+    // Exercise the actual login SQL against this isolated database. A later
+    // login and signup retry retain identity/points and create no extra welcome.
+    await pool.query('UPDATE members SET points_balance=29 WHERE id=$1', [first.body.member.id])
+    const login = async (authId = identity) => {
+      const req = { customerSession: { id: guestId, tableSessionId: visitId },
+        memberIdentity: { authUserId: authId, email: config.testRecipient },
+        body: { memberId: 'spoofed-member', email: 'spoof@example.com' } }
+      const res = { status(code) { this.code = code; return this }, json(body) { this.body = body; return this } }
+      await routes['/api/v1/public/members/login'](req, res, error => { throw error })
+      return res
+    }
+    const laterLogin = await login()
+    assert.equal(laterLogin.code, 200)
+    assert.equal(laterLogin.body.member.id, first.body.member.id)
+    assert.equal(laterLogin.body.member.pointsBalance, 29)
+    const signupRetry = await register()
+    assert.equal(signupRetry.body.member.id, first.body.member.id)
+    assert.equal(signupRetry.body.member.pointsBalance, 29)
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM members')).rows[0].n, 1)
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM member_welcome_emails')).rows[0].n, 1)
+    assert.equal((await login(randomUUID())).code, 404)
+    await pool.query("UPDATE members SET status='inactive' WHERE id=$1", [first.body.member.id])
+    assert.equal((await login()).code, 403)
+    await pool.query("UPDATE members SET status='active' WHERE id=$1", [first.body.member.id])
     await queue.processOne()
     const pending = (await pool.query('SELECT * FROM member_welcome_emails')).rows[0]
     assert.equal(pending.status, 'retry'); assert.equal(pending.attempts, 1)
@@ -108,9 +133,19 @@ test('isolated PostgreSQL: registration/outbox atomicity, safe recovery and sing
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM payments')).rows[0].n, 0)
     const sample = welcomeMessage({ member: { ...first.body.member, email: config.testRecipient }, shopName: 'Test shop', from: config.from })
     assert.match(sample.html, /会员编号/)
+    await pool.query("UPDATE table_sessions SET status='completed' WHERE id=$1", [visitId])
+    assert.equal((await login()).code, 401)
+    assert.equal((await pool.query('SELECT points_balance FROM members WHERE id=$1', [first.body.member.id])).rows[0].points_balance, 29)
+    await pool.query(`UPDATE shop_settings SET config = config || '{"membershipEnabled":false}'::jsonb WHERE id=1`)
+    assert.equal((await register()).code, 503)
+    assert.equal((await login()).code, 503)
+    assert.equal((await pool.query('SELECT points_balance FROM members WHERE id=$1', [first.body.member.id])).rows[0].points_balance, 29)
     console.info('Local-only welcome email flow passed; mocked provider only, no real email or production database accessed.')
   } finally {
     if (pool) await pool.end()
     if (running) run('pg_ctl', ['-D', data, '-m', 'fast', '-w', 'stop'])
+    // Only this invocation's mkdtemp directory, after the cluster is stopped.
+    // Never remove a configured/existing database or anything from DATABASE_URL.
+    rmSync(directory, { recursive: true })
   }
 })

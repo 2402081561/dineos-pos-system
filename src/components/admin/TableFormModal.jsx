@@ -36,7 +36,7 @@ function TableFormModal({ error, initialTable, isSubmitting, onCancel, onSubmit 
       <div className="mx-auto flex min-h-full max-w-lg items-center py-4">
         <form aria-modal="true" className="my-4 w-full animate-[page-enter_180ms_ease-out] rounded-3xl bg-white p-6 shadow-2xl sm:p-8" onSubmit={handleSubmit} role="dialog">
           <div className="flex items-start justify-between gap-4">
-            <div><p className="eyebrow">{uiText("Restaurant table")}</p><h2 className="mt-1 text-2xl font-bold">{initialTable ? uiText("Edit table") : uiText("Add table")}</h2></div>
+            <div><h2 className="text-2xl font-bold">{initialTable ? uiText("Edit table") : uiText("Add table")}</h2></div>
             <button aria-label={uiText("Close dialog")} className="rounded-lg px-2 text-2xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-200" disabled={isSubmitting} onClick={onCancel} type="button">×</button>
           </div>
           <div className="mt-6 grid gap-5 sm:grid-cols-2">

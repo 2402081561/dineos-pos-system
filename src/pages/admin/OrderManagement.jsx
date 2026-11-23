@@ -71,7 +71,7 @@ function OrderManagement() {
   if (error && !orders.length) return <StatePanel description={uiText(error)} title={uiText("Orders unavailable")} tone="error" />
 
   return <div className="space-y-5">
-    <header className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-2xl font-bold tracking-tight text-slate-900">{uiText("Orders")}</h1><p className="mt-1 text-sm text-slate-500">{uiText("View orders, payment and kitchen progress.")}</p></div><span className="inline-flex items-center gap-2 text-xs text-slate-500"><span className={`h-2 w-2 rounded-full ${error ? 'bg-amber-500' : 'bg-emerald-500'}`} />{error ? uiText("Updates unavailable") : uiText("Auto updates")}</span></header>
+    <header className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-2xl font-bold tracking-tight text-slate-900">{uiText("Orders")}</h1></div><span className="inline-flex items-center gap-2 text-xs text-slate-500"><span className={`h-2 w-2 rounded-full ${error ? 'bg-amber-500' : 'bg-emerald-500'}`} />{error ? uiText("Updates unavailable") : uiText("Auto updates")}</span></header>
     {(actionError || error) && <p role="alert" className="rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-700">{actionError || error}</p>}
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 p-4">

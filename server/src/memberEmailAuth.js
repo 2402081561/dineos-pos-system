@@ -1,3 +1,5 @@
+import { requireMembershipProgram } from './membershipProgram.js'
+import { PosValidationError } from './posRules.js'
 // Ask Supabase Auth for the authenticated user, rather than trusting a decoded
 // JWT, submitted email, user metadata, or the old Member ID + phone lookup.
 export function createVerifiedMemberMiddleware({ supabaseUrl, publishableKey, enabled = false, allowedEmail = '', fetchUser = fetch }) {
@@ -46,6 +48,7 @@ export function registerMemberEmailRoutes(app, { pool, requireCustomerSession, r
     try {
       client = await pool.connect()
       await client.query('BEGIN')
+      await requireMembershipProgram(client)
       if (!await visitStillActive(client, request, response)) return
       // Serialize signup retries for the same verified identity. A lost response
       // can safely retry without creating another member or losing their points.
@@ -84,6 +87,7 @@ export function registerMemberEmailRoutes(app, { pool, requireCustomerSession, r
       return response.status(200).json({ member: memberResponse(rows[0]), session, welcomeEmail: { status: welcome } })
     } catch (error) {
       if (client) await client.query('ROLLBACK')
+      if (error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
       if (error.code === '23505') return response.status(409).json({ error: 'An existing membership needs to be linked by the administrator. Your points have been kept.' })
       return next(error)
     } finally { client?.release() }
@@ -94,6 +98,7 @@ export function registerMemberEmailRoutes(app, { pool, requireCustomerSession, r
     try {
       client = await pool.connect()
       await client.query('BEGIN')
+      await requireMembershipProgram(client)
       if (!await visitStillActive(client, request, response)) return
       const { rows } = await client.query(`SELECT id, concat('MEM-', lpad(member_number::text, 5, '0')) AS "memberId", name,
         phone_display AS phone, email, points_balance AS "pointsBalance", status, email_notifications_enabled AS "emailNotificationsEnabled"
@@ -115,6 +120,7 @@ export function registerMemberEmailRoutes(app, { pool, requireCustomerSession, r
       return response.status(200).json({ member: memberResponse(rows[0]), session })
     } catch (error) {
       if (client) await client.query('ROLLBACK')
+      if (error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
       return next(error)
     } finally { client?.release() }
   })

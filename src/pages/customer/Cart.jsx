@@ -118,7 +118,7 @@ function Cart() {
     }
   }
 
-  if (cartItems.length === 0) return <div className="mx-auto max-w-4xl space-y-6"><SectionHeading description={t("Review your items before sending them to the kitchen.")} eyebrow={tableLabel} title={t("Your order")} /><div className="space-y-5"><StatePanel description={t("Discover something delicious and add it to your order.")} title={t("Your cart is empty")} /><div className="text-center"><Link to="/menu"><Button>{t("Browse menu")}</Button></Link></div></div></div>
+  if (cartItems.length === 0) return <div className="mx-auto max-w-4xl space-y-6"><SectionHeading eyebrow={tableLabel} title={t("Your order")} /><div className="space-y-5"><StatePanel description={t("Discover something delicious and add it to your order.")} title={t("Your cart is empty")} /><div className="text-center"><Link to="/menu"><Button>{t("Browse menu")}</Button></Link></div></div></div>
 
   const submitLabel = isSubmitting ? t('Placing order...') : isCartLocked ? t('Retry previous order') : isMenuLoading ? t('Checking menu...') : t('Place order')
   const submitDisabled = isSubmitting || !session || (!isCartLocked && isCheckoutBlocked)
@@ -129,7 +129,7 @@ function Cart() {
       <div><Link className="inline-flex min-h-11 items-center text-sm font-semibold text-orange-700" to="/menu">← {t('Back to Menu')}</Link><h1 className="text-2xl font-extrabold text-slate-900">{t('Your order')} <span className="ml-1 text-base font-semibold text-slate-400">({itemCount})</span></h1></div>
       <button className="min-h-11 rounded-lg px-3 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50" disabled={isSubmitting || isCartLocked} onClick={() => setClearPrompt({ session, signature: customerOrderFingerprint(cartItems, session) })} type="button">{t('Clear cart')}</button>
     </div>
-    <p className="text-sm text-slate-500">{t('Review your items before sending them to the kitchen.')}</p>
+
     {cartIssues.length > 0 && <section aria-live="polite" className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-800"><p className="font-bold">{t('Some items need attention before checkout.')}</p><ul className="mt-2 list-disc space-y-1 pl-5">{cartIssues.map((issue) => <li key={issue.cartItemId}>{t(issue.message)}</li>)}</ul></section>}
     {menuError && <p aria-live="polite" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{t(menuError)}</p>}
     <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">

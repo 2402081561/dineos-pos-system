@@ -67,6 +67,23 @@ test('only a valid language preference is stored and read', () => {
   }
 })
 
+test('first visit defaults to English for both staff login and customer UI', () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => null } })
+  try {
+    // Both interfaces use the shared provider and its default factory.
+    const instance = createCustomerI18n()
+    assert.equal(instance.language, 'en')
+    assert.equal(instance.t('Welcome back'), 'Welcome back')
+    assert.equal(instance.t('Sign in'), 'Sign in')
+    assert.equal(instance.t('Menu'), 'Menu')
+    assert.equal(instance.t('Cart'), 'Cart')
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'localStorage', previous)
+    else delete globalThis.localStorage
+  }
+})
+
 test('blocked browser storage never crashes language selection', () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get: () => { throw new Error('Access denied') } })

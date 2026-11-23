@@ -1,4 +1,5 @@
 import { lazy } from 'react'
+import MembershipFeatureGate from '../components/member/MembershipFeatureGate'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import AdminLayout from '../layouts/AdminLayout'
 import CashierLayout from '../layouts/CashierLayout'
@@ -10,6 +11,7 @@ import CustomerSessionRoute from '../components/customer/CustomerSessionRoute'
 import KitchenLayout from '../layouts/KitchenLayout'
 import StaffLayout from '../layouts/StaffLayout'
 const Login = lazy(() => import('../pages/admin/Login'))
+const AccountSettings = lazy(() => import('../pages/AccountSettings'))
 const CategoryManagement = lazy(() => import('../pages/admin/CategoryManagement'))
 const AdminDashboard = lazy(() => import('../pages/admin/Dashboard'))
 const MenuManagement = lazy(() => import('../pages/admin/MenuManagement'))
@@ -63,8 +65,8 @@ function AppRoutes() {
           <Route path="cart" element={<Cart />} />
           <Route path="service-requests" element={<ServiceRequests />} />
           <Route path="orders" element={<OrderHistory />} />
-          <Route path="rewards" element={<CustomerRewards />} />
-          <Route path="member" element={<MemberProfile />} />
+          <Route path="rewards" element={<MembershipFeatureGate><CustomerRewards /></MembershipFeatureGate>} />
+          <Route path="member" element={<MembershipFeatureGate><MemberProfile /></MembershipFeatureGate>} />
           <Route path="table-summary" element={<TableSummary />} />
           <Route path="bill" element={<Bill />} />
         </Route>
@@ -74,10 +76,12 @@ function AppRoutes() {
         <Route index element={<StaffDashboard />} />
         <Route path="requests" element={<Requests />} />
         <Route path="tables" element={<Tables />} />
+        <Route path="account-settings" element={<AccountSettings />} />
       </Route>
 
       <Route path="kitchen" element={<ProtectedRoleRoute roles={['admin', 'kitchen']}><KitchenLayout /></ProtectedRoleRoute>}>
         <Route index element={<KitchenDashboard />} />
+        <Route path="account-settings" element={<AccountSettings />} />
       </Route>
 
       <Route path="admin/login" element={<Login />} />
@@ -85,6 +89,7 @@ function AppRoutes() {
         <Route index element={<CashierDashboard />} />
         <Route path="new-order" element={<CashierNewOrder />} />
         <Route path="notifications" element={<Notifications />} />
+        <Route path="account-settings" element={<AccountSettings />} />
         <Route path="history" element={<ReceiptHistory />} />
         <Route path="receipt/:receiptNumber" element={<Receipt />} />
         <Route path="closing" element={<ShiftClosing />} />
@@ -105,6 +110,7 @@ function AppRoutes() {
         <Route path="members" element={<Members />} />
         <Route path="rewards" element={<Rewards />} />
         <Route path="settings" element={<ShopSettings />} />
+        <Route path="account-settings" element={<AccountSettings />} />
       </Route>
 
       <Route path="*" element={<Navigate replace to="/" />} />

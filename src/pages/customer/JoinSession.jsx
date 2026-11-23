@@ -1,4 +1,3 @@
-import useShopSettings from '../../hooks/useShopSettings'
 import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -12,7 +11,6 @@ import useMemberEmailAvailability from '../../hooks/useMemberEmailAvailability'
 
 function JoinSession() {
   const { t } = useCustomerLanguage()
-  const { name: shopName } = useShopSettings()
   const membership = useMemberEmailAvailability()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -87,19 +85,18 @@ function JoinSession() {
   return <div className="mx-auto max-w-md pt-4 sm:pt-8"><div className="overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-[0_18px_45px_rgb(15,23,42,0.09)]">
     <div className="bg-gradient-to-br from-orange-50 via-white to-white p-6 text-center sm:p-8">
       <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-orange-600 text-3xl text-white">⌁</div>
-      <p className="eyebrow mt-6">{t('Welcome to {{shopName}}', { shopName })}</p>
-      <h1 className="mt-2 text-3xl font-extrabold tracking-tight">{mode === 'register' ? t('Join Membership') : mode === 'login' ? t('Member Login') : mode === 'success' ? t('Membership Created') : t('Ready to order?')}</h1>
-      <p className="mt-3 text-sm leading-6 text-slate-500">{mode === 'welcome' ? t('Order as a Guest, or use membership to earn points and redeem rewards.') : t('You are joining Table {{number}}.', { number: tableNumber || '—' })}</p>
+      <h1 className="mt-6 text-3xl font-extrabold tracking-tight">{mode === 'register' ? t('Join Membership') : mode === 'login' ? t('Member Login') : mode === 'success' ? t('Membership Created') : t('Ready to order?')}</h1>
+      {mode !== 'welcome' && <p className="mt-3 text-sm leading-6 text-slate-500">{t('You are joining Table {{number}}.', { number: tableNumber || '—' })}</p>}
       {mode === 'welcome' && <div className="mt-7 rounded-3xl border border-orange-100 bg-white p-5"><p className="text-xs font-bold text-orange-700">{t('Your table')}</p><p className="mt-2 text-5xl font-extrabold text-orange-600">{tableNumber || '—'}</p></div>}
     </div>
     <div className="p-6 sm:p-8">
       {(error || sessionError) && <p className="mb-4 rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-700" role="alert">{t(error || sessionError)}</p>}
       {mode === 'welcome' && <div className="space-y-3">
         <Button className="w-full py-3.5" disabled={isJoining} onClick={() => continueAsGuest()}>{isJoining ? t('Opening your table...') : t('Continue as Guest')}</Button>
-        <Button className="w-full py-3.5" disabled={isJoining || !membership.enabled} onClick={() => changeMode('login')} variant="outline">{t('Member Login')}</Button>
+        {membership.programEnabled && <><Button className="w-full py-3.5" disabled={isJoining || !membership.enabled} onClick={() => changeMode('login')} variant="outline">{t('Member Login')}</Button>
         <button className="min-h-11 w-full rounded-xl px-4 py-2.5 text-sm font-bold text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={isJoining || !membership.enabled} onClick={() => changeMode('register')} type="button">{t('Create Membership')}</button>
         {!membership.enabled && <p role="status" className="rounded-xl bg-slate-50 p-3 text-center text-xs leading-5 text-slate-600">{t(membership.isLoading ? 'Checking membership availability...' : 'Member email login is not available yet. You can still order as Guest.')}</p>}
-        <p className="pt-2 text-center text-xs leading-5 text-slate-400">{t('Membership is optional. Guest ordering works without an account.')}</p>
+        <p className="pt-2 text-center text-xs leading-5 text-slate-400">{t('Membership is optional. Guest ordering works without an account.')}</p></>}
       </div>}
       {['login', 'register'].includes(mode) && (membership.enabled ? <MemberEmailAuth key={`${mode}-${tableNumber}`} purpose={mode} testMode={membership.testMode} getTableSession={sharedTableSession} onSuccess={completed} onBack={() => changeMode('welcome')} /> : <div><p role="status" className="rounded-xl bg-slate-50 p-3 text-sm">{t('Member email login is not available yet. You can still order as Guest.')}</p><Button className="mt-3 w-full" onClick={() => changeMode('welcome')} variant="outline">{t('← Back')}</Button></div>)}
       {mode === 'success' && registeredMember && <div className="text-center">

@@ -13,6 +13,7 @@ import CashierOverview from '../../components/cashier/CashierOverview'
 import DiscountControl from '../../components/cashier/DiscountControl'
 import useAdminAuth from '../../hooks/useAdminAuth'
 import MemberLookup from '../../components/cashier/MemberLookup'
+import useShopSettings from '../../hooks/useShopSettings'
 import RewardRedemption from '../../components/cashier/RewardRedemption'
 import useCashierTables from '../../hooks/useCashierTables'
 import { calculateTableDiscount } from '../../services/orderService'
@@ -52,6 +53,8 @@ function groupParticipants(orders) {
 }
 
 function CashierDashboard() {
+  const { config: shopConfig } = useShopSettings()
+  const membershipEnabled = shopConfig?.membershipEnabled === true
   const { t: uiText } = useCustomerLanguage()
 
   const { authUser: user } = useAdminAuth()
@@ -303,8 +306,8 @@ function CashierDashboard() {
           onOpenTable={openTable}
           paymentTables={tables}
         >
-        <MemberLookup onMemberChange={setLookupMember} />
-        {lookupMember && (
+        {membershipEnabled && <MemberLookup onMemberChange={setLookupMember} />}
+        {membershipEnabled && lookupMember && (
           <RewardRedemption
             member={lookupMember}
             onComplete={(result) =>
@@ -400,8 +403,8 @@ function CashierDashboard() {
           </details>
         </section>
         <aside className="h-fit space-y-5 xl:sticky xl:top-24">
-          <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-bold">{uiText("Member / loyalty")}{' '}{associatedMemberId && <span className="font-normal text-slate-500">· {associatedMemberId}</span>}</summary><div className="mt-3"><MemberLookup associatedMemberId={associatedMemberId} /></div></details>
-          {associatedMemberIds.length > 1 && <p className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-800">{uiText("This payment has mixed member/guest orders, so no loyalty points will be awarded.")}</p>}
+          {membershipEnabled && <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-bold">{uiText("Member / loyalty")}{' '}{associatedMemberId && <span className="font-normal text-slate-500">· {associatedMemberId}</span>}</summary><div className="mt-3"><MemberLookup associatedMemberId={associatedMemberId} /></div></details>}
+          {membershipEnabled && associatedMemberIds.length > 1 && <p className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-800">{uiText("This payment has mixed member/guest orders, so no loyalty points will be awarded.")}</p>}
           <section className="rounded-xl border border-slate-200 bg-white p-5">
             <p className="text-sm font-semibold text-slate-500">{uiText("Amount to collect")}</p>
             <p className="mt-1 text-4xl font-extrabold tracking-tight text-orange-600">{formatCurrency(previewGrandTotal ?? 0)}</p>

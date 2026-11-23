@@ -29,8 +29,8 @@ function Dashboard() {
     <div className="space-y-7">
       <SectionHeading
         action={<div className="flex flex-wrap items-center gap-2"><button aria-pressed={soundEnabled} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:border-orange-200 hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-orange-300" onClick={toggleSound} type="button">{uiText(soundEnabled ? '🔔 Sound on' : '🔕 Sound off')}</button><Link className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2" to="/staff/requests">{uiText("View all requests")}</Link></div>}
-        description={uiText("Keep an eye on live customer requests and respond as soon as they arrive.")}
-        eyebrow={uiText("Front of house")}
+
+
         title={uiText("Staff dashboard")}
       />
 

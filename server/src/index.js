@@ -34,6 +34,7 @@ import { createSupabaseTokenVerifier, createAuthenticatedUserMiddleware } from '
 import { startApiServer } from './startServer.js'
 import { createVerifiedMemberMiddleware, registerMemberEmailRoutes } from './memberEmailAuth.js'
 import { memberEmailConfig } from './memberEmailConfig.js'
+import { membershipProgramGuard, requireMembershipProgram } from './membershipProgram.js'
 import { createWelcomeSender } from './memberWelcomeEmail.js'
 import { createMemberWelcomeQueue } from './memberWelcomeQueue.js'
 
@@ -75,6 +76,9 @@ registerOrderPushRoutes(app, { pool, requireAuthenticatedUser, requireRole, conf
 const memberPublishableKey = String(process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY ?? '').trim()
 const emailConfig = memberEmailConfig(process.env)
 const memberEmailOtpEnabled = emailConfig.authEnabled
+const requireMembership = membershipProgramGuard(pool)
+app.use(['/api/v1/public/members', '/api/v1/public/member', '/api/v1/public/rewards', '/api/v1/public/points'], requireMembership)
+app.use('/api/v1/cashier/rewards/:rewardId/redeem', requireMembership)
 const welcomeQueue = createMemberWelcomeQueue({ pool, config: emailConfig, send: createWelcomeSender({ config: emailConfig }) })
 const requireVerifiedMember = createVerifiedMemberMiddleware({ supabaseUrl, publishableKey: memberPublishableKey, enabled: memberEmailOtpEnabled, allowedEmail: emailConfig.mode === 'test' ? emailConfig.testRecipient : '' })
 registerPaymentRecoveryRoute(app, { pool, requireAuthenticatedUser, requireRole })
@@ -84,8 +88,12 @@ registerOrderIdentifierRoutes(app, { pool, requireAuthenticatedUser, requireRole
 registerTableVisitMoveRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 registerWalkInAssignmentRoutes(app, { pool, requireAuthenticatedUser, requireRole })
 registerTakeawayQrRoutes(app, { pool })
-app.get('/api/v1/public/member-auth-config', (_request, response) => {
-  response.set('Cache-Control', 'no-store').json({ emailOtpEnabled: memberEmailOtpEnabled, testMode: memberEmailOtpEnabled && emailConfig.mode === 'test' })
+app.get('/api/v1/public/member-auth-config', async (_request, response, next) => {
+  try {
+    const settings = await loadStoreSettings(pool)
+    const enabled = memberEmailOtpEnabled && settings.config.membershipEnabled === true
+    response.set('Cache-Control', 'no-store').json({ membershipEnabled: settings.config.membershipEnabled === true, emailOtpEnabled: enabled, testMode: enabled && emailConfig.mode === 'test' })
+  } catch (error) { next(error) }
 })
 
 async function requireCustomerSession(request, response, next) {
@@ -423,6 +431,7 @@ app.post('/api/v1/public/rewards/:rewardId/redeem', requireCustomerSession, asyn
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    await requireMembershipProgram(client)
     const member = await client.query("SELECT id, name, points_balance AS \"pointsBalance\" FROM members WHERE id = $1 AND status = 'active' FOR UPDATE", [request.customerSession.memberId])
     if (!member.rows[0]) throw new Error('Your membership is no longer active.')
     const reward = await client.query('SELECT rewards.id, rewards.name, rewards.points_required AS "pointsRequired" FROM rewards JOIN menu_items ON menu_items.id = rewards.menu_item_id WHERE rewards.id = $1 AND rewards.is_available = true AND menu_items.is_available = true FOR UPDATE OF rewards, menu_items', [String(request.params.rewardId ?? '')])
@@ -435,6 +444,7 @@ app.post('/api/v1/public/rewards/:rewardId/redeem', requireCustomerSession, asyn
     return response.status(201).json({ redemption: { rewardName: reward.rows[0].name, pointsUsed: Number(reward.rows[0].pointsRequired), pointsBalance: Number(member.rows[0].pointsBalance) - Number(reward.rows[0].pointsRequired), redemptionReference: reference } })
   } catch (error) {
     await client.query('ROLLBACK')
+    if (error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
     if (String(error.message).includes('no longer') || String(error.message).includes('enough points')) return response.status(409).json({ error: error.message })
     return next(error)
   } finally { client.release() }
@@ -666,7 +676,7 @@ app.post('/api/v1/cashier/payments', requireAuthenticatedUser, requireRole('admi
     await client.query('UPDATE payments SET order_snapshot = $1::jsonb, request_id = $2, request_fingerprint = $3 WHERE id = $4', [JSON.stringify(finalOrders), requestId, fingerprint, payment.rows[0].id])
     const memberIds = [...new Set(selected.map((order) => order.memberId))]
     let loyalty = null
-    if (memberIds.length === 1 && memberIds[0]) {
+    if (memberIds.length === 1 && memberIds[0] && (await loadStoreSettings(client)).config.membershipEnabled === true) {
       const member = await client.query("SELECT id, name, points_balance AS \"pointsBalance\" FROM members WHERE id = $1 AND status = 'active' FOR UPDATE", [memberIds[0]])
       if (member.rows[0]) {
         const points = Math.floor(discountedSubtotal)
@@ -1150,6 +1160,7 @@ app.post('/api/v1/cashier/rewards/:rewardId/redeem', requireAuthenticatedUser, r
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    await requireMembershipProgram(client)
     const member = await client.query("SELECT id, concat('MEM-', lpad(member_number::text, 5, '0')) AS \"memberId\", name, points_balance AS \"pointsBalance\" FROM members WHERE (id::text = $1 OR concat('MEM-', lpad(member_number::text, 5, '0')) = $1) AND status = 'active' FOR UPDATE", [memberKey])
     const reward = await client.query('SELECT rewards.id, rewards.name, rewards.points_required AS "pointsRequired" FROM rewards JOIN menu_items ON menu_items.id = rewards.menu_item_id WHERE rewards.id = $1 AND rewards.is_available = true AND menu_items.is_available = true FOR UPDATE OF rewards, menu_items', [String(request.params.rewardId ?? '')])
     if (!member.rows[0]) throw new Error('This member is not eligible for rewards.')
@@ -1164,6 +1175,7 @@ app.post('/api/v1/cashier/rewards/:rewardId/redeem', requireAuthenticatedUser, r
     response.status(201).json({ redemption: { memberName: member.rows[0].name, pointsUsed: Number(reward.rows[0].pointsRequired), pointsBalance: balance, rewardName: reward.rows[0].name, redemptionReference: reference } })
   } catch (error) {
     await client.query('ROLLBACK')
+    if (error instanceof PosValidationError) return response.status(error.status).json({ error: error.message })
     if (String(error.message).includes('not eligible') || String(error.message).includes('no longer') || String(error.message).includes('not have enough')) return response.status(409).json({ error: error.message })
     next(error)
   } finally { client.release() }

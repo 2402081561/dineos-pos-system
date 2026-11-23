@@ -8,6 +8,7 @@ import { paymentPlan, selectPaymentOrders } from '../src/paymentSelection.js'
 import { createHash } from 'node:crypto'
 import { cashierBillTotal, getCashPayment, moneyToCents } from '../../src/utils/cashPayment.js'
 import { getReceiptDetails } from '../../src/utils/receipt.js'
+import { loadStoreSettings } from '../src/shopSettings.js'
 
 test('cash amount validation agrees between frontend and backend', () => {
   for (const value of ['', ' ', null, undefined, false, {}, [], '-1', 'NaN', NaN, Infinity, 'Infinity', '1e3', '0x10', '1.001', '5.', '.5', '10,00', '10000000000', '999999999999999999999']) {
@@ -65,13 +66,15 @@ const source = await readFile(new URL('../src/index.js', import.meta.url), 'utf8
 const handlerSource = source.slice(source.indexOf("app.post('/api/v1/cashier/payments'"), source.indexOf("app.get('/api/v1/cashier/receipts/:receiptNumber'"))
 const orderId = '11111111-1111-4111-8111-111111111111'
 
-async function paymentRequest(body, { status = 'served', paymentStatus = 'pending' } = {}) {
+async function paymentRequest(body, { status = 'served', paymentStatus = 'pending', memberId = null, membershipEnabled = false } = {}) {
   let handler
   const queries = []
   const client = {
     async query(sql, values) {
       queries.push({ sql, values })
-      if (sql.includes('FOR UPDATE OF orders')) return { rows: [{ id: orderId, version: 1, tableSessionId: 'session', tableId: 'table', tableNumber: 1, status, paymentStatus, subtotal: '5.00', memberId: null }] }
+      if (sql.includes('FOR UPDATE OF orders')) return { rows: [{ id: orderId, version: 1, tableSessionId: 'session', tableId: 'table', tableNumber: 1, status, paymentStatus, subtotal: '5.00', memberId }] }
+      if (sql.startsWith('SELECT name, config, revision FROM shop_settings')) return { rows: [{ name: 'Test', config: { membershipEnabled } }] }
+      if (sql.includes('FROM members WHERE id')) return { rows: [{ id: memberId, name: 'Test member', pointsBalance: 29 }] }
       if (sql.includes('FROM order_items WHERE order_id')) return { rows: [{ id: orderId, name: 'Tea', price: '5.00', quantity: 1, paidQuantity: 0 }] }
       if (sql.includes('INSERT INTO receipt_sequences')) return { rows: [{ last_number: 1 }] }
       if (sql.includes('INSERT INTO payments')) return { rows: [{ id: 'payment', receiptNumber: values[0], amount: String(values[4]), cashReceived: values[5], changeAmount: values[6], paidAt: new Date() }] }
@@ -87,6 +90,7 @@ async function paymentRequest(body, { status = 'served', paymentStatus = 'pendin
     cashTenderInCents,
     allocateBill,
     paymentPlan, selectPaymentOrders, createHash, PosValidationError,
+    loadStoreSettings,
     pool: { connect: async () => client },
     money: Number,
     roundMoney: (value) => Math.round((value + Number.EPSILON) * 100) / 100,
@@ -152,4 +156,16 @@ test('payment is permitted before serving and does not change fulfilment', async
     assert.equal(result.code, 201)
     assert.ok(!result.queries.some(({ sql }) => /SET status|fulfilled_quantity\s*=/.test(sql)))
   }
+})
+
+test('program off still accepts member-linked payments without awarding points or changing totals', async () => {
+  const off = await paymentRequest({ cashReceived: '10' }, { memberId: 'member-1' })
+  const on = await paymentRequest({ cashReceived: '10' }, { memberId: 'member-1', membershipEnabled: true })
+  assert.equal(off.code, 201); assert.equal(on.code, 201)
+  assert.equal(off.result.payment.amount, on.result.payment.amount)
+  assert.equal(off.result.payment.loyalty, null)
+  assert.equal(off.queries.some(({ sql }) => /UPDATE members|INSERT INTO member_point_transactions/.test(sql)), false)
+  assert.equal(on.result.payment.loyalty.points, 5)
+  assert.equal(on.result.payment.loyalty.pointsBalance, 34)
+  assert.ok(on.queries.some(({ sql }) => sql.includes('UPDATE members')))
 })

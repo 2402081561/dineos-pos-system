@@ -14,8 +14,10 @@ export function memberEmailConfig(env) {
   const senderAddress = from.match(/<([^<>]+)>$/)?.[1] ?? from
   const senderValid = from.length <= 254 && !/[\r\n\p{Cc}]/u.test(from) && Boolean(normalizedEmail(senderAddress))
   const apiKey = String(env.RESEND_API_KEY ?? '').trim()
+  const provider = env.MEMBER_EMAIL_PROVIDER ?? 'resend'
+  const gmailCredentialsFile = String(env.MEMBER_GMAIL_CREDENTIALS_FILE ?? '').trim()
   const welcomeEnabled = authEnabled && env.MEMBER_WELCOME_EMAIL_ENABLED === 'true'
-    && Boolean(apiKey) && senderValid
+    && (provider === 'gmail' ? Boolean(gmailCredentialsFile) : provider === 'resend' && Boolean(apiKey)) && senderValid
     && (mode === 'test' || !senderAddress.toLowerCase().endsWith('@resend.dev'))
-  return { mode, testRecipient, authEnabled, welcomeEnabled, from, apiKey }
+  return { mode, testRecipient, authEnabled, welcomeEnabled, from, apiKey, provider, gmailCredentialsFile }
 }

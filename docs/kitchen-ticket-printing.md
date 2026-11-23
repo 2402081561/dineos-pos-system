@@ -8,7 +8,7 @@ For the 2026-10-29 release, the user declined database upgrades. Production ther
 
 Admin → Menu → Edit provides **Kitchen short name** (40 characters), for example 奶油鸡饭 or `cont kt`. No machine translation or truncation is applied; missing aliases fall back to the full original name. Only the kitchen queue and kitchen ticket use this live alias. Customer names, order items and paid receipt snapshots remain unchanged. Migration `031_kitchen_short_names.sql` must run before the updated menu write API is deployed. Do not automatically bulk-populate aliases: the restaurant must confirm its own vocabulary.
 
-Items print in a dine-in group followed by a takeaway group, omitting empty groups. Each dining designation appears once above its items, not on every dish line. Relative item order within each group, quantities, options and notes are preserved; identical dishes with different packing are never combined. Order dates/times, print timestamps and additional-order boilerplate are omitted from paper at the user's request; actual revision warnings remain visible. The kitchen queue keeps its additional-order warning. Prices and payment totals are omitted. Queue polling supplies the current visible snapshot; confirm it before printing/reprinting.
+Items print in a dine-in group followed by a takeaway group, omitting empty groups. Each dining designation appears once above its items, not on every dish line. Relative item order within each group, quantities, options and notes are preserved; identical dishes with different packing are never combined. Order dates/times and additional-order boilerplate are omitted from paper at the user's request; actual revision warnings remain visible. A print-time footer was added at the user's request on 13 November 2026, as described below. The kitchen queue keeps its additional-order warning. Prices and payment totals are omitted. Queue polling supplies the current visible snapshot; confirm it before printing/reprinting.
 
 Android Chrome requires DineOS Print Helper **v0.3.0** or later, with the existing application ID/signing key. The new `kitchen_ticket` document kind is distinct from `paid_receipt`; both require explicit confirmation in the helper. Previous helper versions do not support kitchen tickets. Browser printing/PDF remains available; print CSS isolates the ticket from the dashboard and controls. No raw ESC/POS commands are accepted from the webpage.
 
@@ -39,3 +39,17 @@ protocol. It still renders its own inline quantity/name layout, not the browser'
 CSS columns; note rows now use normal rather than bold type. No helper APK was
 rebuilt in this revision. Browser preview checks and tests are not a physical
 printer acceptance test. This local revision is not a deployment record.
+
+## Kitchen print time — 13 November 2026
+
+The kitchen ticket now ends with one compact `Printed at` / `打印时间` row,
+formatted `DD/MM/YYYY HH:mm:ss` in Malaysia time (`Asia/Kuching`). The preview
+starts with its opening time; each explicit print/reprint action refreshes the
+time before browser capture or Android handoff. Browser-menu printing also
+refreshes it through `beforeprint`. The order's creation time is not changed.
+
+The Android row uses the existing v1 `center` style and remains compatible with
+Print Helper v0.3.0; no new APK is required. It records the webpage's print
+initiation time, not the helper's later physical send time or proof of paper
+output. No database write, order/payment mutation or paid-receipt change is
+introduced. Local tests are not a physical-printer acceptance test or deployment.

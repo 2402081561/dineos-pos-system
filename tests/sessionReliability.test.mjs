@@ -235,3 +235,48 @@ test('explicit staff sign-in submits credentials once, announces verification an
     assert.equal(credentials, 1, 'Recovery reuses the saved session rather than resubmitting credentials')
   } finally { globalThis.fetch = previousFetch }
 })
+
+test('real auth service assigns new SDK keys to deliberate logins and ignores disposed account events', async () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window'), previousFetch = globalThis.fetch
+  const map = new Map(), tab = nativeStorage()
+  const durable = { ...nativeStorage(), get length() { return map.size }, key: index => [...map.keys()][index], getItem: key => map.get(key) ?? null, setItem: (key, value) => map.set(key, String(value)), removeItem: key => map.delete(key) }
+  const clients = [], observations = []
+  try {
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { sessionStorage: tab, localStorage: durable } })
+    const api = bundle('src/services/supabaseAuthService.js', name => name === '@supabase/supabase-js' ? {
+      createClient(_url, _key, { auth: options }) {
+        const item = { options, callback: null, disposed: false }
+        const auth = {
+          onAuthStateChange: callback => { item.callback = callback; return { data: { subscription: { unsubscribe() {} } } } },
+          dispose: async () => { item.disposed = true },
+          signInWithPassword: async ({ email }) => {
+            options.storage.setItem(options.storageKey, JSON.stringify({ access_token: email, refresh_token: 'test-only' }))
+            return { data: { session: { access_token: email } } }
+          },
+          signOut: async () => { options.storage.removeItem(options.storageKey); item.callback?.('SIGNED_OUT', null) },
+        }
+        clients.push(item); return { auth }
+      },
+    } : undefined)
+    globalThis.fetch = async (_url, request) => ({ ok: true, json: async () => ({ user: { id: request.headers.Authorization, displayName: 'Test', role: request.headers.Authorization.includes('admin') ? 'admin' : 'cashier' } }) })
+    const stop = api.subscribeToSupabaseSession(session => observations.push(session))
+    await api.signInSupabaseUser('admin@example.test', 'not-stored')
+    const admin = clients.at(-1)
+    await api.signInSupabaseUser('cashier@example.test', 'not-stored')
+    const cashier = clients.at(-1)
+    assert.notEqual(admin.options.storageKey, cashier.options.storageKey)
+    const count = observations.length
+    admin.callback('TOKEN_REFRESHED', { access_token: 'old-admin' })
+    assert.equal(observations.length, count, 'late old-account events cannot switch the active user')
+    assert.equal(admin.disposed, true)
+    await api.signOutSupabaseAdmin()
+    assert(admin.options.storage.getItem(admin.options.storageKey), 'cashier logout keeps the separate admin account')
+    assert.equal(cashier.options.storage.getItem(cashier.options.storageKey), null)
+    assert([...map.values()].every(value => !value.includes('not-stored')))
+    stop()
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
+    else delete globalThis.window
+    globalThis.fetch = previousFetch
+  }
+})

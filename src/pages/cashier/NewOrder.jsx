@@ -224,7 +224,7 @@ function NewOrder() {
 
 
   if (placedOrder?.actorId === actorId && placedOrder) return <div className="mx-auto max-w-xl space-y-6 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
-    <SectionHeading eyebrow={uiText("Cashier POS")} title={uiText("Order sent to kitchen")} description={orderLocationLabel(placedOrder, uiText)} />
+    <SectionHeading title={uiText("Order sent to kitchen")} description={orderLocationLabel(placedOrder, uiText)} />
     <div className="surface-card p-6"><OrderTypeBadge orderType={placedOrder.orderType} /><p className="text-sm text-slate-600">{uiText("The kitchen can now prepare this order. Payment and serving or collection are recorded separately.")}</p><p className="mt-4 text-xl font-bold text-orange-600">{formatCurrency(placedOrder.grandTotal)}</p></div>
     <div className="flex flex-wrap gap-3">{placedOrder.isWalkIn && <Link className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-bold text-white" to="/cashier" state={{ orderId: placedOrder.id }}>{uiText('Collect payment')}</Link>}<Button variant="outline" onClick={() => { setPlacedOrder(null); void loadSetup() }}>{uiText("Another order")}</Button><Link className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold" to={placedOrder.tableId ? `/cashier?tableId=${encodeURIComponent(placedOrder.tableId)}` : "/cashier"}>{uiText("Back to dashboard")}</Link></div>
   </div>

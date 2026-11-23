@@ -81,7 +81,7 @@ function TableSummary() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-7">
-      <SectionHeading description={t(isSharedTable ? 'This is the whole table’s unpaid amount, not one person’s bill.' : "See who is dining with you and keep an eye on your table's unpaid total.")} eyebrow={t('Table {{number}}', { number: tableNumber })} title={t("Table summary")} />
+      <SectionHeading description={isSharedTable ? t('This is the whole table’s unpaid amount, not one person’s bill.') : undefined} eyebrow={t('Table {{number}}', { number: tableNumber })} title={t("Table summary")} />
       <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-orange-600 to-orange-500 p-6 text-white shadow-xl shadow-orange-600/20 sm:p-7">
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-orange-100">{t("Current unpaid table total")}</p>
         <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
@@ -97,8 +97,7 @@ function TableSummary() {
       <section>
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <p className="eyebrow">{t(isSharedTable ? 'Shared table orders' : 'Dining together')}</p>
-            <h2 className="mt-1 text-xl font-bold">{t(isSharedTable ? 'Unpaid order breakdown' : 'Participants')}</h2>
+            <h2 className="text-xl font-bold">{t(isSharedTable ? 'Unpaid order breakdown' : 'Participants')}</h2>
           </div>
           <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600">{t("Live updates")}</span>
         </div>

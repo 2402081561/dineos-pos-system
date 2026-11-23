@@ -166,8 +166,8 @@ function TableManagement() {
     <div className="space-y-6">
       <SectionHeading
         action={<Button className="w-full sm:w-auto" onClick={openCreateForm}>{uiText("+ Add table")}</Button>}
-        description={uiText("Set up your dining areas and their QR ordering access.")}
-        eyebrow={uiText("Administration")}
+
+
         title={uiText("Manage tables")}
       />
 

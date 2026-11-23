@@ -87,8 +87,8 @@ function Reports() {
     <div className="space-y-7">
       <SectionHeading
         action={<Button className="w-full sm:w-auto" onClick={exportReport} variant="secondary">{uiText("↓ Export CSV")}</Button>}
-        description={uiText("Live operational performance and historical sales trends, calculated from your existing restaurant data.")}
-        eyebrow={uiText("Analytics")}
+
+
         title={uiText("Reports & insights")}
       />
 

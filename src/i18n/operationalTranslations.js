@@ -1,6 +1,17 @@
 // Interface copy only. Shop details, dish names and user-entered notes remain unchanged.
 export const operationalChinese = {
   'Notes': '备注',
+  'Printed at': '打印时间',
+  'Reconnecting': '重连中',
+  'Offline': '已离线',
+  'Account settings': '账号设置',
+  'Saved accounts': '已保存的账号',
+  'Use another account': '使用其他账号',
+  'The active login changed. Please try again.': '当前登录账号已改变，请重试。',
+  'Saved on this browser. Expires after 7 days without use.': '保存在此浏览器，连续 7 天未使用后需重新登录。',
+  'This saved login is no longer available. Please sign in again.': '此登录已失效，请重新登录。',
+  'Your browser could not restore this login. Please sign in again.': '浏览器无法恢复此登录，请重新登录。',
+  'Your saved login expired after 7 days without use. Please sign in again.': '连续 7 天未使用，保存的登录已过期，请重新登录。',
   'Print labels (optional)': '补充打印资料（选填）',
   'Review print labels before printing.': '请展开补充打印资料，检查读取或保存状态后再打印。',
   'These labels apply to this print only. They do not move the order to another table.': '这些资料只用于本次打印，不会更改订单所属桌位。',

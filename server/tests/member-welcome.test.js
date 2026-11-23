@@ -87,6 +87,7 @@ test('registration commits its welcome job before delivery; lost response retrie
   const events = [], handlers = {}; let existing = false
   const client = { async query(sql) {
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) events.push(sql)
+    if (sql.includes('FROM shop_settings')) return { rows: [{ name: 'Test', config: { membershipEnabled: true } }] }
     if (sql.includes('FOR UPDATE OF table_sessions')) return { rows: [{ id: 'visit' }] }
     if (sql.includes('FROM members WHERE auth_user_id')) return { rows: existing ? [{ ...member, status: 'active' }] : [] }
     if (sql.includes('INSERT INTO members')) { existing = true; return { rows: [{ ...member, status: 'active' }] } }

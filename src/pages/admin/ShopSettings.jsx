@@ -44,7 +44,7 @@ export default function ShopSettings() {
     finally { setUploading(false) }
   }
   return <div className="mx-auto max-w-5xl space-y-5">
-    <SectionHeading eyebrow={uiText("Administration")} title={uiText("Shop settings")} description={uiText("One restaurant · shared by all staff. Saved receipts keep their original shop details and charges.")} />
+    <SectionHeading title={uiText("Shop settings")} description={uiText("One restaurant · shared by all staff. Saved receipts keep their original shop details and charges.")} />
     <form className="space-y-5" onSubmit={submit}>
       <fieldset disabled={disabled} className="surface-card grid gap-5 p-5 sm:grid-cols-2">
         <legend className="sr-only">{uiText("Shop and receipt details")}</legend>
@@ -65,6 +65,12 @@ export default function ShopSettings() {
         <legend className="sr-only">{uiText('Food handoff')}</legend><h2 className="text-lg font-bold">{uiText('Food handoff')}</h2>
         <label className="flex items-center gap-3 text-sm font-semibold"><input type="checkbox" checked={config.requireHandoffConfirmation} onChange={(e) => change('requireHandoffConfirmation', e.target.checked)} />{uiText('Require staff to confirm served or collected')}</label>
         <p className="text-xs leading-5 text-slate-500">{uiText('When off, staff do not need to confirm each item. After all orders are ready and paid, the cashier may clear the table. Food is not recorded as served or collected. This setting applies to current and future visits.')}</p>
+      </fieldset>
+      <fieldset disabled={disabled} className="surface-card space-y-4 p-5">
+        <legend className="sr-only">{uiText('Membership and rewards')}</legend>
+        <h2 className="text-lg font-bold">{uiText('Membership and rewards')}</h2>
+        <label className="flex min-h-11 items-center gap-3 text-sm font-semibold"><input className="h-5 w-5 accent-orange-600" type="checkbox" checked={config.membershipEnabled} onChange={(event) => change('membershipEnabled', event.target.checked)} />{uiText('Enable membership and points')}</label>
+        <p className="text-xs leading-5 text-slate-500">{uiText('When off, customers order as guests. Member registration, login, new points and reward redemption are paused. Existing members, points and history are kept. Email login must also be configured before customers can sign in.')}</p>
       </fieldset>
       <fieldset disabled={disabled} className="surface-card space-y-4 p-5">
         <legend className="sr-only">{uiText("Kitchen estimates")}</legend><h2 className="text-lg font-bold">{uiText("Kitchen estimates")}</h2>

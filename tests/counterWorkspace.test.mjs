@@ -17,7 +17,7 @@ test('new order is the first cashier action for cashiers and admins; admin back 
       const { navigation } = runtime.render(h.Layout).props
       if (role === 'admin') assert.equal(navigation[0].to, '/admin/dashboard')
       assert.deepEqual(navigation.filter(link => link.to.startsWith('/cashier')).map(link => link.to), [
-        '/cashier/new-order', '/cashier', '/cashier/history', '/cashier/closing', '/cashier/notifications',
+        '/cashier/new-order', '/cashier', '/cashier/history', '/cashier/closing', '/cashier/notifications', '/cashier/account-settings',
       ])
       assert.equal(navigation.find(link => link.to === '/cashier').end, true)
     }

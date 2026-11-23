@@ -58,13 +58,35 @@ test('customer connection notices hide routine updates but still warn and recove
   }
 })
 
-test('only customer portals opt into warnings-only status; staff keeps the default', () => {
+test('customer keeps warnings-only status while employee header gets a compact indicator', () => {
   const read = (file) => readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8')
   assert.match(read('layouts/CustomerLayout.jsx'), /<PortalLayout connectionWarningsOnly /)
   const portal = read('components/common/PortalLayout.jsx')
   assert.match(portal, /connectionWarningsOnly = false/)
-  assert.match(portal, /<ConnectionStatus warningsOnly=\{connectionWarningsOnly\}/)
+  assert.match(portal, /employeePortal && <ConnectionStatus compact/)
+  assert.match(portal, /flex min-w-0 flex-1 items-center gap-1 pr-2 lg:gap-3/)
+  assert.match(portal, /<ConnectionStatus warningsOnly=\{employeePortal \|\| connectionWarningsOnly\}/)
   for (const role of ['Admin', 'Cashier', 'Kitchen', 'Staff']) {
     assert.doesNotMatch(read(`layouts/${role}Layout.jsx`), /connectionWarningsOnly/)
+  }
+})
+
+test('compact indicator uses the last successful update, exposes details and does not hide failures', async () => {
+  const runtime = hookRuntime()
+  const h = await bundleHarness(`export {default as Status} from './src/components/common/ConnectionStatus.jsx';export {fixture} from 'connection-fixture'`, runtime, {
+    'connection-fixture': `export const fixture={state:'current',lastUpdated:Date.parse('2026-11-18T02:35:00Z')}`,
+    connectionStatus: `import {fixture} from 'connection-fixture';export const connectionSnapshot=()=>fixture;export const subscribeConnection=()=>()=>{}`,
+    useCustomerLanguage: `export default ()=>({t:text=>text,locale:'en-MY',formatDate:()=> '18 Nov 2026 10:35'})`,
+  })
+  const render = () => runtime.render(h.Status, { compact: true })
+  let tree = render()
+  assert.equal(tree.type, 'details')
+  assert.equal(findElement(tree, node => node.props.role === 'status').props.children, '10:35')
+  assert.match(findElement(tree, node => node.type === 'summary').props['aria-label'], /18 Nov 2026 10:35/)
+  for (const [state, text] of [['stale','Reconnecting'], ['offline','Offline'], ['checking','Checking live data…']]) {
+    h.fixture.state = state
+    // The mock returns the same snapshot object so this also avoids real timers/network.
+    tree = render()
+    assert.equal(findElement(tree, node => node.props.role === 'status').props.children, text)
   }
 })

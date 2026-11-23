@@ -28,7 +28,8 @@ credentials, nor hosted templates were changed while implementing it.
 3. Frontend environment: existing `VITE_SUPABASE_URL`,
    `VITE_SUPABASE_PUBLISHABLE_KEY`, and `VITE_API_URL`. No new frontend secret.
 4. Supabase Dashboard → Authentication → Email provider: enable email auth and
-   signup for new members. Keep email confirmation enabled. Set OTP length to 6.
+   signup for new members. Keep email confirmation enabled. Set OTP length to 6,
+   matching the member UI and service validation (operator-approved on 2026-11-18).
 5. Authentication → Email Templates → Magic Link: use the template below (or
    `email-templates/member-code.html`) to send a numeric OTP, not a clickable
    magic link. Check Confirm Signup for the new-user path as well: any template

@@ -1,12 +1,16 @@
 import { MAX_PRINT_BYTES } from './androidReceiptPrint.js'
 
-export function buildKitchenTicket(order, { tableLabel = '', reference = '', t = (text) => text } = {}) {
+export function buildKitchenTicket(order, { tableLabel = '', reference = '', printedAt = new Date(), t = (text) => text } = {}) {
   if (!order?.orderNumber || !['received', 'preparing', 'ready'].includes(order.status) || !order.items?.length || !Number.isFinite(new Date(order.createdAt).getTime())) throw new Error('Kitchen ticket unavailable.')
   const clean = (value) => [...String(value ?? '')].map((char) => {
     const code = char.codePointAt(0)
     return code < 32 || (code >= 127 && code <= 159) ? ' ' : char
   }).join('').trim()
   if (tableLabel.length > 80 || reference.length > 80) throw new Error('Kitchen ticket unavailable.')
+  const printDate = printedAt == null ? new Date(NaN) : new Date(printedAt)
+  if (!Number.isFinite(printDate.getTime())) throw new Error('Kitchen ticket unavailable.')
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kuching', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(printDate).map(({ type, value }) => [type, value]))
+  const printTime = `${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}:${parts.second}`
   const rows = []
   const row = (left, style = 'normal') => rows.push({ left: clean(left), right: '', style })
   row(t('Kitchen ticket'), 'heading')
@@ -38,6 +42,7 @@ export function buildKitchenTicket(order, { tableLabel = '', reference = '', t =
     printedGroup = true
   }
   row('', 'rule')
+  row(`${t('Printed at')}: ${printTime}`, 'center')
   const payload = { version: 1, kind: 'kitchen_ticket', receiptNumber: String(order.orderNumber), rows }
   if (rows.length > 300 || rows.some((entry) => entry.left.length > 1000) || new TextEncoder().encode(JSON.stringify(payload)).length > MAX_PRINT_BYTES) throw new Error('Kitchen ticket unavailable.')
   return payload

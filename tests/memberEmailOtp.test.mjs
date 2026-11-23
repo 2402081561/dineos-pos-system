@@ -16,7 +16,10 @@ test('real OTP service normalizes email and sends/verifies only through dedicate
   assert.deepEqual(calls[1], { email: 'test@example.com', options: { shouldCreateUser: false } })
   assert.equal(await service.verifyCode('test@example.com', '123456'), 'test-only-token')
   assert.deepEqual(calls[2], { email: 'test@example.com', token: '123456', type: 'email' })
-  await assert.rejects(service.verifyCode('test@example.com', '12345'), /6-digit/)
+  for (const code of ['12345', '1234567', '12345678', '12abcd']) {
+    await assert.rejects(service.verifyCode('test@example.com', code), /6-digit/)
+  }
+  assert.equal(calls.length, 3, 'malformed codes must not reach Supabase')
   await assert.rejects(service.sendCode('not-email'), /valid email/)
   const source = await readFile(new URL('../src/services/memberOtpService.js', import.meta.url), 'utf8')
   assert.match(source, /persistSession: false/); assert.match(source, /autoRefreshToken: false/)
@@ -51,7 +54,7 @@ async function uiHarness() {
     import MemberEmailAuth from './src/components/member/MemberEmailAuth.jsx';import JoinSession from './src/pages/customer/JoinSession.jsx';import {fixture} from 'member-fixture';export {MemberEmailAuth,JoinSession,fixture}
   `, runtime, {
     'member-fixture': `export const fixture={memberEnabled:true,sends:[],verifies:0,requests:[],failedCode:false,failedApi:false,joins:0,result:{member:{id:'member-1',memberId:'MEM-00001',email:'test@example.com',pointsBalance:29},session:{sessionId:'test-visit',tableNumber:'1'}}}`,
-    useMemberEmailAvailability: `import {fixture} from 'member-fixture';export default ()=>({isLoading:false,enabled:fixture.memberEnabled,testMode:fixture.testMode===true})`,
+    useMemberEmailAvailability: `import {fixture} from 'member-fixture';export default ()=>({isLoading:false,enabled:fixture.memberEnabled,programEnabled:fixture.programEnabled!==false,testMode:fixture.testMode===true})`,
     useCustomerLanguage: 'export default ()=>({t:(text,options={})=>text.replace(/{{(\\w+)}}/g,(match,key)=>options[key]??match)})',
     useShopSettings: 'export default ()=>({name:"Test restaurant"})',
     useCustomerSession: 'export default ()=>({session:null,sessionError:"",clearSession:async()=>{},startSession(){}})',
@@ -77,7 +80,15 @@ test('member email UI sends no table/API request until OTP verified; invalid cod
     const resend = findElement(h.runtime.render(h.MemberEmailAuth, props), (node) => node.props?.children === 'Resend code in 60s')
     assert.equal(resend.props.disabled, true)
     resend.props.onClick(); await flush(); assert.equal(h.fixture.sends.length, 1)
-    input(h, props, 'member-otp', '12ab3456'); h.fixture.failedCode = true
+    const otpInput = findElement(h.runtime.render(h.MemberEmailAuth, props), node => node.props?.id === 'member-otp')
+    assert.equal(otpInput.props.maxLength, 6)
+    assert.equal(otpInput.props.pattern, '[0-9]{6}')
+    input(h, props, 'member-otp', '12345')
+    assert.equal(findElement(h.runtime.render(h.MemberEmailAuth, props), node => node.props?.children === 'Verify and continue').props.disabled, true)
+    input(h, props, 'member-otp', '12ab3456789')
+    assert.equal(findElement(h.runtime.render(h.MemberEmailAuth, props), node => node.props?.id === 'member-otp').props.value, '123456')
+    assert.equal(findElement(h.runtime.render(h.MemberEmailAuth, props), node => node.props?.children === 'Verify and continue').props.disabled, false)
+    h.fixture.failedCode = true
     await submit(h, props)
     assert.equal(h.fixture.joins, 0); assert.equal(success.length, 0)
     assert.ok(findElement(h.runtime.render(h.MemberEmailAuth, props), (node) => node.props?.role === 'alert'))
@@ -142,6 +153,17 @@ test('paused membership disables login and registration while Guest entry still 
     assert.equal(guest.props.disabled, false)
     await guest.props.onClick()
     assert.equal(h.fixture.joins, 1); assert.equal(h.fixture.sends.length, 0)
+  } finally { h.runtime.cleanup() }
+})
+
+test('admin program off hides membership entry rather than showing disabled signup', async () => {
+  const h = await uiHarness()
+  try {
+    h.fixture.programEnabled = false; h.fixture.memberEnabled = false
+    const tree = h.runtime.render(h.JoinSession)
+    for (const label of ['Member Login', 'Create Membership']) assert.equal(findElement(tree, node => node.props?.children === label), null)
+    assert.equal(findElement(tree, node => node.props?.children === 'Continue as Guest').props.disabled, false)
+    assert.equal(h.fixture.sends.length, 0)
   } finally { h.runtime.cleanup() }
 })
 

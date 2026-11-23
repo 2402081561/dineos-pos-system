@@ -1,4 +1,5 @@
 import { normalizedEmail } from './memberEmailConfig.js'
+import { createGmailWelcomeSender } from './memberWelcomeGmail.js'
 
 function plain(value, fallback = '') {
   return String(value ?? fallback).replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim().slice(0, 120)
@@ -28,7 +29,9 @@ export class WelcomeDeliveryError extends Error {
 }
 
 export function createWelcomeSender({ config, fetchEmail = fetch }) {
+  if (config.provider === 'gmail') return createGmailWelcomeSender({ config, fetchEmail })
   return async function send(body, key) {
+    if ((body.deliveryProvider ?? 'resend') !== 'resend') throw new WelcomeDeliveryError('EMAIL_PROVIDER_MISMATCH')
     if (!config.welcomeEnabled) throw new WelcomeDeliveryError('EMAIL_DISABLED')
     if (config.mode === 'test' && (body.to?.length !== 1 || normalizedEmail(body.to[0]) !== config.testRecipient)) {
       throw new WelcomeDeliveryError('TEST_RECIPIENT_BLOCKED')
@@ -39,7 +42,7 @@ export function createWelcomeSender({ config, fetchEmail = fetch }) {
     try {
       response = await fetchEmail('https://api.resend.com/emails', {
         method: 'POST', headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': key },
-        body: JSON.stringify(body), signal: AbortSignal.timeout(15000),
+        body: JSON.stringify(Object.fromEntries(Object.entries(body).filter(([field]) => field !== 'deliveryProvider'))), signal: AbortSignal.timeout(15000),
       })
     } catch { throw new WelcomeDeliveryError('EMAIL_RESPONSE_UNCERTAIN', true) }
     if (!response.ok) throw new WelcomeDeliveryError(`EMAIL_HTTP_${response.status}`, response.status === 429 || response.status >= 500)

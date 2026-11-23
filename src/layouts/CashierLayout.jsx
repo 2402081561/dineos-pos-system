@@ -8,6 +8,7 @@ const cashierNavigation = [
   { label: 'Receipt history', to: '/cashier/history' },
   { label: 'Shift closing', to: '/cashier/closing' },
   { label: 'Order notifications', to: '/cashier/notifications' },
+  { label: 'Account settings', to: '/cashier/account-settings' },
 ]
 
 function CashierLayout() {

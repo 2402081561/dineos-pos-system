@@ -76,8 +76,8 @@ function Members() {
   return (
     <div className="space-y-6">
       <SectionHeading
-        description={uiText("Customer memberships and their current profile preferences.")}
-        eyebrow={uiText("Administration")}
+
+
         title={uiText("Members")}
       />
       <section className="overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-sm">

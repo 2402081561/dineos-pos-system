@@ -18,6 +18,7 @@ export function createMemberWelcomeQueue({ pool, config, send, logger = console 
       if (created) {
         const { rows } = await client.query('SELECT name FROM shop_settings WHERE id=1')
         const body = welcomeMessage({ member, shopName: rows[0]?.name, from: config.from })
+        body.deliveryProvider = config.provider ?? 'resend'
         await client.query('INSERT INTO member_welcome_emails(member_id,payload) VALUES($1,$2::jsonb) ON CONFLICT(member_id) DO NOTHING', [member.id, JSON.stringify(body)])
       }
       const { rows } = await client.query('SELECT status FROM member_welcome_emails WHERE member_id=$1', [member.id])
@@ -34,6 +35,12 @@ export function createMemberWelcomeQueue({ pool, config, send, logger = console 
     if (!config.welcomeEnabled || running) return
     running = true
     try {
+      // Bind jobs to their original transport. Gmail attempts are one-shot:
+      // an expired lease may mean the message sent before the worker crashed.
+      await pool.query(`UPDATE member_welcome_emails SET status='blocked',last_error_code='EMAIL_MANUAL_REVIEW_REQUIRED',updated_at=now()
+        WHERE status IN ('pending','processing','retry') AND (lease_until IS NULL OR lease_until<now())
+        AND (COALESCE(payload->>'deliveryProvider','resend') <> $1
+          OR (payload->>'deliveryProvider'='gmail' AND attempts>0))`, [config.provider ?? 'resend'])
       // Never retry after the provider's 24h deduplication window. A crash or
       // timeout may have sent the message already; an operator must check it.
       await pool.query(`UPDATE member_welcome_emails SET status='blocked',last_error_code='EMAIL_RETRY_WINDOW_EXPIRED',updated_at=now()
@@ -44,10 +51,12 @@ export function createMemberWelcomeQueue({ pool, config, send, logger = console 
           SELECT id FROM member_welcome_emails WHERE
             ((status IN ('pending','retry') AND next_attempt_at<=now()) OR (status='processing' AND lease_until<now()))
             AND (first_attempt_at IS NULL OR first_attempt_at>now()-interval '23 hours')
+            AND COALESCE(payload->>'deliveryProvider','resend')=$2
+            AND (COALESCE(payload->>'deliveryProvider','resend')<>'gmail' OR attempts=0)
           ORDER BY next_attempt_at,id FOR UPDATE SKIP LOCKED LIMIT 1
         ) UPDATE member_welcome_emails m SET status='processing',attempts=attempts+1,
           first_attempt_at=COALESCE(first_attempt_at,now()),lease_until=now()+interval '2 minutes',lease_token=$1,updated_at=now()
-        FROM due WHERE m.id=due.id RETURNING m.*`, [token])
+        FROM due WHERE m.id=due.id RETURNING m.*`, [token, config.provider ?? 'resend'])
       const job = rows[0]
       if (!job) return
       try {
@@ -57,7 +66,7 @@ export function createMemberWelcomeQueue({ pool, config, send, logger = console 
       } catch (error) {
         const known = error instanceof WelcomeDeliveryError
         const code = known ? error.code : 'EMAIL_RESPONSE_UNCERTAIN'
-        const retry = (!known || error.retryable) && job.attempts < 6
+        const retry = config.provider !== 'gmail' && (!known || error.retryable) && job.attempts < 6
         await pool.query(`UPDATE member_welcome_emails SET status=$1,last_error_code=$2,
           next_attempt_at=now()+interval '5 minutes',lease_until=NULL,lease_token=NULL,updated_at=now()
           WHERE id=$3 AND lease_token=$4`, [retry ? 'retry' : 'blocked', code, job.id, token])

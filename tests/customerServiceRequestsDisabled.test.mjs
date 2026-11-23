@@ -16,9 +16,10 @@ test('retired service URL redirects without rendering forms, requests or login a
 test('More reserves the guest account area without service actions or a premature login form', async () => {
   const runtime = hookRuntime()
   const h = await bundleHarness("export {default as More} from './src/pages/customer/More.jsx';export {fixture} from 'account-placeholder-fixture'", runtime, {
-    'account-placeholder-fixture': 'export const fixture={session:{tableNumber:1}}',
+    'account-placeholder-fixture': 'export const fixture={session:{tableNumber:1},membershipEnabled:true}',
     useCustomerLanguage: 'export default ()=>({t:text=>text})',
     useCustomerSession: "import {fixture} from 'account-placeholder-fixture';export default ()=>({session:fixture.session})",
+    useShopSettings: "import {fixture} from 'account-placeholder-fixture';export default ()=>({config:{membershipEnabled:fixture.membershipEnabled}})",
   })
   try {
     let tree = runtime.render(h.More)
@@ -29,6 +30,10 @@ test('More reserves the guest account area without service actions or a prematur
     tree = runtime.render(h.More)
     assert.ok(findElement(tree, node => node.props?.to === '/member'))
     assert.ok(findElement(tree, node => node.props?.to === '/rewards'))
+    h.fixture.membershipEnabled = false
+    tree = runtime.render(h.More)
+    assert.equal(findElement(tree, node => node.props?.to === '/member'), null)
+    assert.equal(findElement(tree, node => node.props?.to === '/rewards'), null)
     assert.equal(findElement(tree, node => node.props?.to === '/service-requests'), null)
   } finally { runtime.cleanup() }
 })

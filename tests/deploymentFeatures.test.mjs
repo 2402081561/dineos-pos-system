@@ -22,7 +22,7 @@ test('schema-031 kitchen dialog can preview and print temporary labels without a
   const h = await bundleHarness(`export {default as Dialog} from './src/components/kitchen/KitchenTicketDialog.jsx';export {default as Paper} from './src/components/kitchen/KitchenTicketPaper.jsx'`, runtime, {
     useCustomerLanguage: 'export default ()=>({t:text=>text})',
     deploymentFeatures: 'export const hasSavedTableVisitTools=false',
-    'react-dom': 'export const createPortal=node=>node',
+    'react-dom': 'export const createPortal=node=>node;export const flushSync=fn=>fn()',
     OrderIdentifiers: 'export default function SavedIdentifiers(){throw new Error("Must not mount on schema 031")}',
   })
   const props = { order: { orderNumber: 'internal-only', status: 'ready', createdAt: '2026-10-29T10:00:00Z', tableNumber: 1, items: [{ name: 'Original', kitchenName: 'cont kt', quantity: 2, orderType: 'take_away' }] }, onClose() {} }

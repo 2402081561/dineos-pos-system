@@ -50,10 +50,10 @@ test('plain identifiers have no label prefixes or extra system-table row in eith
   const fallback = buildKitchenTicket(order)
   assert.equal(fallback.rows[1].left, '1')
 })
-test('minimal kitchen paper labels each dining group once, without queue numbers, dates or timestamps', () => {
+test('minimal kitchen paper labels each dining group once, with one print-time footer', () => {
   for (const type of ['dine_in', 'take_away']) {
-    const ticket = buildKitchenTicket({ ...order, orderType: type, isAddition: true, items: [{ name: '公保猪肉饭', kitchenName: 'G/O Pork Rice', quantity: 3, orderType: type }] }, { tableLabel: '8899' })
-    assert.deepEqual(ticket.rows.map((row) => row.left), ['Kitchen ticket', '8899', '', `【${type === 'take_away' ? 'TAKE AWAY' : 'Dine in'}】`, '3× G/O Pork Rice', ''])
+    const ticket = buildKitchenTicket({ ...order, orderType: type, isAddition: true, items: [{ name: '公保猪肉饭', kitchenName: 'G/O Pork Rice', quantity: 3, orderType: type }] }, { tableLabel: '8899', printedAt: '2026-11-12T17:30:00Z' })
+    assert.deepEqual(ticket.rows.map((row) => row.left), ['Kitchen ticket', '8899', '', `【${type === 'take_away' ? 'TAKE AWAY' : 'Dine in'}】`, '3× G/O Pork Rice', '', 'Printed at: 13/11/2026 01:30:00'])
   }
   const t = (value) => ({ 'Kitchen ticket': '厨房单', 'Dine in': '堂食', 'TAKE AWAY': '打包' })[value] ?? value
   const ticket = buildKitchenTicket(order, { t })
@@ -72,8 +72,22 @@ test('interleaved mixed items retain quantities and attached notes within two cl
   ]
   const original = structuredClone(items)
   const rows = buildKitchenTicket({ ...order, items }).rows.map((row) => row.left)
-  assert.deepEqual(rows.slice(3), ['【Dine in】', '2× B', 'Notes: B note', '4× D', '', '【TAKE AWAY】', '1× A', 'Notes: A note', '3× C', ''])
+  assert.deepEqual(rows.slice(3, -1), ['【Dine in】', '2× B', 'Notes: B note', '4× D', '', '【TAKE AWAY】', '1× A', 'Notes: A note', '3× C', ''])
   assert.equal(rows.filter((text) => text.includes('Dine in')).length, 1)
   assert.equal(rows.filter((text) => text.includes('TAKE AWAY')).length, 1)
   assert.deepEqual(items, original)
+})
+
+test('print time uses Malaysia time, not the order date or device timezone, and remains helper-v1 compatible', () => {
+  const t = value => value === 'Printed at' ? '打印时间' : value
+  const original = structuredClone(order)
+  const first = buildKitchenTicket(order, { printedAt: '2026-11-12T16:00:01Z', t })
+  const reprint = buildKitchenTicket(order, { printedAt: '2026-11-12T16:05:02Z', t })
+  assert.deepEqual(first.rows.at(-1), { left: '打印时间: 13/11/2026 00:00:01', right: '', style: 'center' })
+  assert.equal(reprint.rows.at(-1).left, '打印时间: 13/11/2026 00:05:02')
+  assert.deepEqual(first.rows.slice(0, -1), reprint.rows.slice(0, -1))
+  assert.deepEqual(JSON.parse(Buffer.from(androidReceiptIntent(first).match(/payload=([^#]+)/)[1], 'base64url')), first)
+  assert.equal(first.version, 1)
+  assert.deepEqual(order, original)
+  for (const printedAt of ['bad', null, new Date(NaN)]) assert.throws(() => buildKitchenTicket(order, { printedAt }))
 })

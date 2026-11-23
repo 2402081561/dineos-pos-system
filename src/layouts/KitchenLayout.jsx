@@ -1,7 +1,7 @@
 import PortalLayout from '../components/common/PortalLayout'
 import useAdminAuth from '../hooks/useAdminAuth'
 
-const navigation = [{ label: 'Dashboard', to: '/kitchen' }]
+const navigation = [{ end: true, label: 'Dashboard', to: '/kitchen' }, { label: 'Account settings', to: '/kitchen/account-settings' }]
 
 function KitchenLayout() {
   const { authUser } = useAdminAuth()

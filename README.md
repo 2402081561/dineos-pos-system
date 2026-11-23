@@ -1,95 +1,81 @@
 # DineOS
 
-A QR ordering and point-of-sale system for a single restaurant, developed as a final-year project. DineOS brings customer ordering, counter service, kitchen preparation and payment records into one workflow.
+DineOS is a restaurant ordering and point-of-sale (POS) system developed as a final-year project.
 
-## Main workflows
+It helps customers order food through a QR code and helps restaurant staff handle orders, kitchen preparation and payments in one place.
 
-- **Customers:** scan a table or takeaway QR code, browse the menu, choose options, submit orders and track their status.
-- **Counter staff:** place orders for customers, manage table visits and walk-in orders, collect payments and split bills.
-- **Kitchen:** view incoming orders, update preparation status and print kitchen tickets.
-- **Administrators:** manage the menu, categories, tables, staff access, receipts and reports.
+## Why I built it
 
-The interface includes Chinese and English translations. Feature availability depends on the checked-out revision, database migrations and runtime configuration. Local work is not automatically part of the deployed website.
+Handwritten orders can be hard to read, and staff may need to repeat food choices or special requests to the kitchen. Group payments can also be difficult to track.
 
-## Architecture
+DineOS provides a digital way to handle these tasks while keeping counter ordering available for customers who need staff assistance.
 
-| Layer | Technology / responsibility |
+## Main features
+
+- **QR ordering:** customers scan a table QR code, browse the menu and place an order.
+- **Separate carts at the same table:** each customer chooses food on their own phone. Their submitted orders are linked to the same table visit.
+- **Counter ordering:** cashiers can order for customers, including walk-in customers without an assigned table.
+- **Dine-in and takeaway:** staff and customers can choose how each item should be prepared for collection or serving.
+- **Split bills:** cashiers select the unpaid items and quantities a customer wants to pay for. The rest stays unpaid.
+- **Kitchen screen:** kitchen staff can view orders, read notes and update preparation status.
+- **Admin tools:** administrators can manage food, categories, tables, memberships and rewards, and view order history and sales reports.
+- **Chinese and English:** users can switch the interface language.
+
+Order notifications and Bluetooth printing need additional setup and compatible devices.
+
+## Who uses it?
+
+| User | What they do |
 | --- | --- |
-| Web client | React, Vite, Tailwind CSS, React Router |
-| Backend | Node.js, Express; authentication checks and restaurant business rules |
-| Database | PostgreSQL; versioned SQL migrations |
-| Staff authentication | Supabase Auth |
-| Hosting | Netlify frontend, Render backend |
-| Optional integrations | Web Push notifications and print helpers |
+| Customer | Browse food, customise items, order and check order status |
+| Cashier | Take orders, record payments, split bills and view receipts |
+| Kitchen staff | View orders and update preparation status |
+| Administrator | Manage the restaurant's menu, tables and records |
 
-The current web app uses the REST API rather than direct Firestore access. Firebase dependencies and command-line tools remain for historical data verification and migration.
+## Technologies used
 
-## Repository layout
+| Technology | What it does in DineOS |
+| --- | --- |
+| React | Builds the pages and buttons people use |
+| Tailwind CSS | Styles the layout, colours and spacing |
+| Node.js and Express | Run the backend that processes requests and checks business rules |
+| Supabase PostgreSQL | Stores menus, orders, payments and other restaurant records |
+| Supabase Auth | Handles staff sign-in |
+| Netlify and Render | Host the frontend and backend |
 
-```text
-src/                    Web application, routes, components and API clients
-public/                 Public assets and notification service worker
-server/src/             Express API and business logic
-server/db/              Versioned PostgreSQL migrations
-server/tests/           Backend tests
-tests/                  Frontend logic and regression tests
-scripts/                Legacy data maintenance tools
-android-print-helper/   Android Bluetooth print helper
-docs/                   Feature guides, test notes and release history
-```
+## Run it locally
 
-## Local development
+You need Node.js, npm, a development PostgreSQL database and a Supabase project configured for staff login.
 
-Use a current Node.js version compatible with the package requirements, npm and a dedicated development PostgreSQL database. Use separate development authentication credentials; do not copy production secrets into the repository.
+1. Install the frontend and backend packages:
 
-Install dependencies:
+   ```sh
+   npm ci
+   npm --prefix server ci
+   ```
 
-```sh
-npm ci
-npm --prefix server ci
-```
+2. Follow the [development guide](docs/development.md) to create the local environment files and set up a separate test database. Installing packages alone does not create staff accounts.
 
-Copy the root `.env.example` to `.env` and configure:
+3. Start the backend and frontend in two terminals:
 
-```dotenv
-VITE_API_URL=http://localhost:4000
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=your-public-key
-```
+   ```sh
+   npm --prefix server run dev
+   ```
 
-These browser values are public configuration, not backend secrets. Configure `server/.env` separately using [the backend setup guide](server/README.md). Review that guide before initializing a new database or provisioning staff access. Never run migrations or data maintenance scripts against production as a routine development step.
+   ```sh
+   npm run dev
+   ```
 
-Start the backend and frontend in separate terminals:
+4. Open the local address shown in the terminal, usually `http://localhost:5173`.
 
-```sh
-npm --prefix server run dev
-```
+Do not use real restaurant data or production passwords for local testing.
 
-```sh
-npm run dev
-```
+## More information
 
-Open the frontend address printed by Vite (normally `http://localhost:5173`). This starts local development only; it does not publish the application.
+- [Development guide and test commands](docs/development.md)
+- [Feature guides](docs/README.md)
+- [Kitchen printing](docs/kitchen-ticket-printing.md)
+- [Order notifications](docs/order-push-notifications.md)
+- [Future feature ideas](docs/future-features.md)
 
-## Checks
-
-```sh
-npm run lint
-node --test tests/*.test.mjs server/tests/*.test.js
-npm --prefix server run check
-npm run build
-```
-
-Tests requiring an explicitly configured, isolated local database may be skipped by default. A passing local build does not establish that production credentials, infrastructure or physical printers are working.
-
-## Integration and release notes
-
-- [Documentation index](docs/README.md)
-- [Android print helper](android-print-helper/README.md)
-- [Order notification setup](docs/order-push-notifications.md): requires push configuration, a subscribed employee device and a real-device background test.
-- [Kitchen ticket printing](docs/kitchen-ticket-printing.md): printer compatibility depends on the selected print method and device.
-- [Connection recovery](docs/connection-recovery.md): hosting availability and idle wake-up behavior must be verified separately from UI checks.
-
-Email verification and native iPhone printing are not assumed ready simply because related source code or documentation exists. Check the applicable setup and device-validation status before demonstrating them.
-
-Deployment is a separate, reviewed action. A push to a connected branch can trigger hosting auto-deployment; do not push an unreviewed working tree just to save local progress. Do not include `.env` files, database backups, personal documents, build outputs or demo credentials in commits or screenshots.
+Some changes may still be local and not yet on the live website. The guides include device tests and older development notes; a file in this repository does not mean that feature is ready for daily use.

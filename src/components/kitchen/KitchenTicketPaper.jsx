@@ -9,6 +9,7 @@ export default function KitchenTicketPaper({ ticket, label }) {
         return <hr className="kitchen-ticket-rule" key={index} />
       }
       if (row.style === 'heading') return <p className={index === 0 ? 'kitchen-ticket-title' : index === 1 ? 'kitchen-ticket-location' : 'kitchen-ticket-reference'} key={index}>{row.left}</p>
+      if (row.style === 'center') return <p className="kitchen-ticket-meta" key={index}>{row.left}</p>
       if (row.style === 'bold' && /^【.*】$/u.test(row.left)) {
         inItems = false
         return <p className="kitchen-ticket-group" key={index}>{row.left.slice(1, -1)}</p>

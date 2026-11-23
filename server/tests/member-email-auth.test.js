@@ -46,6 +46,7 @@ function routes({ existing = null, collision = false, ended = false } = {}) {
   const customerGuard = () => {}, identityGuard = () => {}
   const client = { async query(sql, params) {
     queries.push({ sql, params })
+    if (sql.includes('FROM shop_settings')) return { rows: [{ name: 'Test', config: { membershipEnabled: true } }] }
     if (sql.includes('FOR UPDATE OF table_sessions')) return { rows: ended ? [] : [{ id: 'visit' }] }
     if (sql.includes('FROM members WHERE auth_user_id')) return { rows: state.existing ? [state.existing] : [] }
     if (sql.includes('SELECT id FROM members WHERE phone_normalized')) return { rows: collision ? [{ id: 'old-unverified-member' }] : [] }

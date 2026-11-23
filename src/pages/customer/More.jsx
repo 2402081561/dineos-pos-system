@@ -2,12 +2,14 @@ import useCustomerLanguage from '../../hooks/useCustomerLanguage'
 import { Link } from 'react-router-dom'
 import SectionHeading from '../../components/common/SectionHeading'
 import useCustomerSession from '../../hooks/useCustomerSession'
+import useShopSettings from '../../hooks/useShopSettings'
 
 function More() {
   const { t } = useCustomerLanguage()
   const { session } = useCustomerSession()
+  const { config } = useShopSettings()
   const links = [
-    ...(session?.memberId ? [
+    ...(config?.membershipEnabled === true && session?.memberId ? [
       { label: 'Membership', description: 'View your profile, points and points history.', to: '/member' },
       { label: 'Rewards', description: 'Browse the rewards available to members.', to: '/rewards' },
     ] : []),
@@ -25,7 +27,6 @@ function More() {
         ))}
       </div> : <section className="rounded-2xl border border-slate-100 bg-white px-6 py-8 text-center">
         <h2 className="text-base font-bold text-slate-900">{t('Customer accounts will be available here later.')}</h2>
-        <p className="mt-3 text-sm leading-6 text-slate-500">{t('Membership is optional. Guest ordering works without an account.')}</p>
       </section>}
     </div>
   )

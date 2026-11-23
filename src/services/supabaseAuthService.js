@@ -1,21 +1,54 @@
 import { createClient } from '@supabase/supabase-js'
-import { createTabAuthStorage } from '../utils/authStorage'
+import { createRememberedStaffStorage, watchStaffActivity } from '../utils/rememberedStaffSession'
 import { readStaffIdentity } from '../utils/staffIdentityRead'
 
 const url = String(import.meta.env.VITE_SUPABASE_URL ?? '').trim().replace(/\/$/, '')
 const publishableKey = String(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? '').trim()
 const apiUrl = String(import.meta.env.VITE_API_URL ?? 'http://localhost:4000').trim().replace(/\/$/, '')
-const { storage: authStorage, tabId: authTabId } = createTabAuthStorage()
+let remembered = createRememberedStaffStorage()
+const observers = new Map()
 
-const supabase = url && publishableKey ? createClient(url, publishableKey, {
+function makeClient(saved) { return url && publishableKey ? createClient(url, publishableKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: false,
-    storage: authStorage,
-    storageKey: `dineos-staff-session-${authTabId}`,
+    storage: saved.storage,
+    storageKey: `dineos-staff-session-${saved.tabId}`,
   },
-}) : null
+}) : null }
+let supabase = makeClient(remembered)
+
+function observe(onChange) {
+  const saved = remembered
+  return supabase.auth.onAuthStateChange((event, session) => {
+    if (saved === remembered) onChange(saved.expired() ? null : session, event)
+  }).data.subscription
+}
+
+function beginIndependentLogin() {
+  // A deliberate new login gets a fresh key, so another restored tab/account
+  // cannot be overwritten. Rebinding subscriptions does not resend credentials.
+  for (const subscription of observers.values()) subscription.unsubscribe()
+  void supabase?.auth.dispose?.().catch(() => {})
+  remembered = createRememberedStaffStorage({ forceNew: true })
+  supabase = makeClient(remembered)
+  for (const onChange of observers.keys()) { onChange(null); observers.set(onChange, observe(onChange)) }
+}
+
+function assertNotIdleExpired() {
+  if (!remembered.expired()) return
+  throw Object.assign(new Error('Your saved login expired after 7 days without use. Please sign in again.'), { status: 401 })
+}
+
+export function watchStaffLoginActivity() {
+  let notified
+  return watchStaffActivity(() => remembered, () => {
+    if (notified === remembered) return
+    notified = remembered
+    for (const onChange of observers.keys()) onChange(null)
+  })
+}
 
 function client() {
   if (!supabase) throw new Error('Supabase login is not configured yet. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.')
@@ -23,17 +56,27 @@ function client() {
 }
 
 async function apiUser(accessToken, options) {
-  try { return await readStaffIdentity(apiUrl, accessToken, options) }
+  const owner = remembered, auth = supabase
+  assertNotIdleExpired()
+  try {
+    const user = await readStaffIdentity(apiUrl, accessToken, options)
+    if (owner !== remembered) throw new Error('The active login changed. Please try again.')
+    if (owner.expired()) throw Object.assign(new Error('Please sign in to continue.'), { status: 401 })
+    owner.saveProfile(user)
+    return user
+  }
   catch (error) {
-    if (error.status === 403 && supabase) await supabase.auth.signOut({ scope: 'local' })
+    if (error.status === 403 && auth) await auth.auth.signOut({ scope: 'local' })
     throw error
   }
 }
 
 export async function getSupabaseAccessToken() {
+  assertNotIdleExpired()
   const { data, error } = await client().auth.getSession()
   if (error) throw new Error('Your Supabase session could not be read.')
   if (!data.session?.access_token) throw new Error('Please sign in to continue.')
+  assertNotIdleExpired()
   return data.session.access_token
 }
 
@@ -53,14 +96,22 @@ async function sendAuthenticatedRequest(path, { body, method, headers = {}, sign
 }
 
 export async function authenticatedApiRequest(path, { body, method = 'GET', headers = {}, signal } = {}) {
+  const owner = remembered, auth = supabase
+  const checkOwner = () => {
+    if (owner !== remembered) throw new Error('The active login changed. Please try again.')
+    assertNotIdleExpired()
+  }
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('You are offline. Orders and payments cannot be sent until you reconnect.')
   signal = signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000)
   let accessToken = await getSupabaseAccessToken()
+  checkOwner()
   let result = await sendAuthenticatedRequest(path, { body, method, headers, signal }, accessToken)
 
-  if (result.response.status === 401 && supabase) {
-    const { data: refreshed, error } = await supabase.auth.refreshSession()
+  if (result.response.status === 401 && auth) {
+    checkOwner()
+    const { data: refreshed, error } = await auth.auth.refreshSession()
     if (!error && refreshed.session?.access_token) {
+      checkOwner()
       accessToken = refreshed.session.access_token
       result = await sendAuthenticatedRequest(path, { body, method, headers, signal }, accessToken)
     }
@@ -75,6 +126,7 @@ export async function authenticatedApiRequest(path, { body, method = 'GET', head
 }
 
 export async function signInSupabaseAdmin(email, password, { onVerifying } = {}) {
+  beginIndependentLogin()
   const { data, error } = await client().auth.signInWithPassword({ email: String(email).trim(), password })
   if (error || !data.session?.access_token) throw new Error('Unable to sign in. Please check your email and password.')
   onVerifying?.()
@@ -87,6 +139,7 @@ export async function signInSupabaseAdmin(email, password, { onVerifying } = {})
 }
 
 export async function signInSupabaseUser(email, password, { onVerifying } = {}) {
+  beginIndependentLogin()
   const { data, error } = await client().auth.signInWithPassword({ email: String(email).trim(), password })
   if (error || !data.session?.access_token) throw new Error('Unable to sign in. Please check your email and password.')
   onVerifying?.()
@@ -111,6 +164,6 @@ export async function signOutSupabaseAdmin() {
 
 export function subscribeToSupabaseSession(onChange) {
   if (!supabase) { onChange(null); return () => {} }
-  const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => onChange(session, event))
-  return () => subscription.unsubscribe()
+  observers.set(onChange, observe(onChange))
+  return () => { observers.get(onChange)?.unsubscribe(); observers.delete(onChange) }
 }

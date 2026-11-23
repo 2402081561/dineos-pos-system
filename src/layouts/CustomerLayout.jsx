@@ -14,7 +14,9 @@ function CustomerLayoutContent() {
   const { cartItems = [], cartItemCount, isCartLocked } = useCart()
   const cartSubtotal = cartItems.reduce((total, item) => total + Number(item.unitPrice) * Number(item.quantity), 0)
   const { session } = useCustomerSession()
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
+  const tableReference = new URLSearchParams(search).get('table')?.trim() ?? ''
+  const tableQuery = /^[1-9]\d*$/.test(tableReference) ? `?table=${encodeURIComponent(tableReference)}` : ''
   useLayoutEffect(() => {
     // Menu category/dish selection may leave the viewport far down the page.
     // Review and confirmation must start at their heading, not at that offset.
@@ -33,8 +35,8 @@ function CustomerLayoutContent() {
       { active: ['/more', '/service-requests', '/member', '/rewards'].includes(pathname), label: 'More', to: '/more' },
     ]),
   ] : [
-    { end: true, label: 'Home', to: '/' },
-    { label: 'Welcome', to: '/join' },
+    { end: true, label: 'Home', to: `/${tableQuery}` },
+    { label: 'Welcome', to: `/join${tableQuery}` },
   ]
   const sectionLinks = isOrdersPage ? [
     { label: 'My orders', to: '/orders' },

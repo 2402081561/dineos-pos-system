@@ -1,5 +1,9 @@
 // UI copy only: menu names, categories, notes and member names stay as entered.
 export const customerChinese = {
+  'Membership and rewards': '会员与积分奖励',
+  'Enable membership and points': '启用会员与积分',
+  'Membership and rewards are currently paused. You can still order as Guest.': '会员与积分奖励暂未开放，您仍可直接以访客身份点餐。',
+  'When off, customers order as guests. Member registration, login, new points and reward redemption are paused. Existing members, points and history are kept. Email login must also be configured before customers can sign in.': '关闭后顾客使用访客点餐，暂停会员注册、登录、新积分及奖励兑换。现有会员、积分与历史记录都会保留。顾客登录还需要完成邮箱登录配置。',
   'Customer accounts will be available here later.': '这里之后会提供顾客账号功能。',
   'Submit your order': '提交您的订单',
   'Order received': '订单已收到',
