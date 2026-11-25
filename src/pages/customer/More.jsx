@@ -7,8 +7,11 @@ import useShopSettings from '../../hooks/useShopSettings'
 function More() {
   const { t } = useCustomerLanguage()
   const { session } = useCustomerSession()
-  const { config } = useShopSettings()
+  const { config, isLoading, error } = useShopSettings()
   const links = [
+    ...(!isLoading && !error && config?.miniGameEnabled === true ? [
+      { label: 'Catch the ingredients', description: 'Play a 30-second game while you wait.', to: '/more/catch' },
+    ] : []),
     ...(config?.membershipEnabled === true && session?.memberId ? [
       { label: 'Membership', description: 'View your profile, points and points history.', to: '/member' },
       { label: 'Rewards', description: 'Browse the rewards available to members.', to: '/rewards' },

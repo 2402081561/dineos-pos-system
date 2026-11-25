@@ -35,13 +35,17 @@ function Dashboard() {
   const soundEnabledRef = useRef(readSoundPreference())
   const lastSoundAlertKeyRef = useRef('')
   const [soundEnabled, setSoundEnabled] = useState(readSoundPreference)
-  const [statusFilter, setStatusFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('active')
   const newOrders = useMemo(() => orders.filter((order) => newOrderIds.has(order.id)), [newOrderIds, orders])
   const filters = [
-    { id: 'all', label: 'All', count: orders.length },
+    { id: 'active', label: 'Active orders', count: orders.filter((order) => ['received', 'preparing'].includes(String(order.status).toLowerCase())).length },
     ...['received', 'preparing', 'ready'].map((status) => ({ id: status, label: { received: 'Received', preparing: 'Preparing', ready: 'Kitchen ready' }[status], count: orders.filter((order) => String(order.status).toLowerCase() === status).length })),
   ]
-  const visibleOrders = statusFilter === 'all' ? orders : orders.filter((order) => String(order.status).toLowerCase() === statusFilter)
+  // Completed tickets remain available under Ready, but no longer crowd the
+  // working queue. Only server-confirmed snapshots change an order's status.
+  const visibleOrders = orders.filter((order) => statusFilter === 'active'
+    ? ['received', 'preparing'].includes(String(order.status).toLowerCase())
+    : String(order.status).toLowerCase() === statusFilter)
 
   useEffect(() => {
     isMountedRef.current = true
@@ -124,7 +128,7 @@ function Dashboard() {
   return <div className="space-y-5">
     <SectionHeading action={<div className="flex flex-wrap gap-2"><button className="min-h-11 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-bold text-orange-700 hover:bg-orange-100" onClick={() => void playAlert(true)} type="button">{uiText('▶ Test sound')}</button><button aria-pressed={soundEnabled} className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:border-orange-200 focus:outline-none focus:ring-2 focus:ring-orange-300" onClick={toggleSound} type="button">{uiText(soundEnabled ? '🔔 Sound on' : '🔕 Sound off')}</button></div>} title={uiText('Incoming orders')} />
     {soundError && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{uiText(soundError)}</p>}
-    {newOrders.length > 0 && <section aria-live="polite" className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-orange-950"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-extrabold">🔔 {uiText('New orders waiting')}</p>{statusFilter !== 'all' && statusFilter !== 'received' && <button className="min-h-11 font-bold underline" onClick={() => setStatusFilter('received')} type="button">{uiText('Show new orders')}</button>}</div><p className="mt-1 text-sm text-orange-900">{newOrders.map((order) => `${orderLocationLabel(order, uiText)} · ${orderLabel(order)}${order.orderType === 'take_away' ? uiText(' · TAKE AWAY') : ''}`).join('  •  ')}</p></section>}
+    {newOrders.length > 0 && <section aria-live="polite" className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-orange-950"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-extrabold">🔔 {uiText('New orders waiting')}</p>{statusFilter !== 'active' && statusFilter !== 'received' && <button className="min-h-11 font-bold underline" onClick={() => setStatusFilter('received')} type="button">{uiText('Show new orders')}</button>}</div><p className="mt-1 text-sm text-orange-900">{newOrders.map((order) => `${orderLocationLabel(order, uiText)} · ${orderLabel(order)}${order.orderType === 'take_away' ? uiText(' · TAKE AWAY') : ''}`).join('  •  ')}</p></section>}
     {error && orders.length > 0 && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">{uiText('Kitchen connection lost. Orders shown may be out of date; actions are paused until reconnection.')}</div>}
     {updateError && <StatePanel description={uiText(updateError)} title={uiText('Order update failed')} tone="error" />}
     {!isLoading && orders.length > 0 && <nav aria-label={uiText('Filter kitchen orders')} className="flex flex-wrap gap-2">{filters.map((filter) => <button aria-pressed={statusFilter === filter.id} className={`min-h-11 rounded-xl border px-4 py-2 text-sm font-bold transition ${statusFilter === filter.id ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-orange-300'}`} key={filter.id} onClick={() => setStatusFilter(filter.id)} type="button">{uiText(filter.label)} <span className="ml-1 tabular-nums">{filter.count}</span></button>)}</nav>}

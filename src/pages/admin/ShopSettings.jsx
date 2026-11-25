@@ -46,6 +46,9 @@ export default function ShopSettings() {
   return <div className="mx-auto max-w-5xl space-y-5">
     <SectionHeading title={uiText("Shop settings")} description={uiText("One restaurant · shared by all staff. Saved receipts keep their original shop details and charges.")} />
     <form className="space-y-5" onSubmit={submit}>
+      <fieldset disabled={disabled} className="surface-card p-5">
+        <label className="flex min-h-11 items-center gap-3 text-sm font-semibold"><input type="checkbox" checked={config.miniGameEnabled} onChange={(event) => change('miniGameEnabled', event.target.checked)} />{uiText('Show waiting-time mini-game')}</label>
+      </fieldset>
       <fieldset disabled={disabled} className="surface-card grid gap-5 p-5 sm:grid-cols-2">
         <legend className="sr-only">{uiText("Shop and receipt details")}</legend>
         <h2 className="text-lg font-bold sm:col-span-2">{uiText("Shop & receipt details")}</h2>

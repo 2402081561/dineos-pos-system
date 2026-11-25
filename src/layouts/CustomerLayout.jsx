@@ -32,7 +32,7 @@ function CustomerLayoutContent() {
     { active: isOrdersPage, label: 'My Orders', to: '/orders' },
     ...(session.isTakeawayQr ? [{active:pathname==='/takeaway',label:'My pickup',to:'/takeaway'}] : [
       { active: isTableBillPage, label: 'Table Bill', to: '/table-summary' },
-      { active: ['/more', '/service-requests', '/member', '/rewards'].includes(pathname), label: 'More', to: '/more' },
+      { active: pathname.startsWith('/more/') || ['/more', '/service-requests', '/member', '/rewards'].includes(pathname), label: 'More', to: '/more' },
     ]),
   ] : [
     { end: true, label: 'Home', to: `/${tableQuery}` },

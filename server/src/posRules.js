@@ -6,6 +6,7 @@ export class PosValidationError extends Error {
 }
 export const roundMoney = (value) => Math.round((value + Number.EPSILON) * 100) / 100
 export const defaultConfig = {
+  miniGameEnabled: false,
   ...defaultKitchenConfig,
   logoUrl: '', address: '', phone: '', receiptFooter: 'Thank you! Please come again.',
   acceptingOrders: true, membershipEnabled: false, enforceOpeningHours: false, requireHandoffConfirmation: true, takeawayQrEnabled: false, serviceChargeRate: 10, sstRate: 6,
@@ -24,6 +25,7 @@ function amount(value, max = 999999.99) {
 export function validateStoreConfig(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some((key) => !Object.hasOwn(defaultConfig, key))) throw new PosValidationError('Invalid shop configuration.')
   const config = { ...defaultConfig, ...input }
+  if (typeof config.miniGameEnabled !== 'boolean') throw new PosValidationError('miniGameEnabled must be true or false.')
   for (const [field, max] of [['logoUrl', 2000], ['address', 300], ['phone', 40], ['receiptFooter', 300]]) config[field] = text(config[field], max, field)
   if (config.logoUrl) { let url; try { url = new URL(config.logoUrl) } catch { /* validated below */ } if (url?.protocol !== 'https:' || url.username || url.password) throw new PosValidationError('Logo must be an HTTPS image URL without credentials.') }
   for (const field of ['acceptingOrders', 'membershipEnabled', 'enforceOpeningHours', 'requireHandoffConfirmation', 'takeawayQrEnabled']) if (typeof config[field] !== 'boolean') throw new PosValidationError(`${field} must be true or false.`)

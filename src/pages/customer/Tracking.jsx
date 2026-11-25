@@ -34,7 +34,7 @@ function getPreparationEstimate(status, order, t) {
 
 function Tracking() {
   const { t, statusLabel, formatDate } = useCustomerLanguage()
-  const { config } = useShopSettings()
+  const { config, error: settingsError, isLoading: settingsLoading } = useShopSettings()
   const { order, orders, isLoading, error } = useLatestOrder()
   const [selectedOrderId, setSelectedOrderId] = useState(null)
   const selectedOrder = orders.find((entry) => entry.id === selectedOrderId) ?? null
@@ -75,6 +75,11 @@ function Tracking() {
   const title = isCompleted ? t('Payment Completed') : isAwaitingPayment ? t('Awaiting Payment') : currentStatus === 'received' ? t('Order received') : t('Order {{status}}', { status: isTakeAway ? t(displayStatuses[statusIndex].title) : statusLabel(statuses[statusIndex].key) })
 
   return <div className="customer-tracking-page mx-auto max-w-2xl space-y-5">
+    {!settingsLoading && !settingsError && config.miniGameEnabled === true && ['received', 'preparing'].includes(currentStatus) && (
+      <Link className="inline-flex min-h-11 items-center rounded-xl border border-orange-200 bg-orange-50 px-4 text-sm font-bold text-orange-800" to="/more/catch" state={{ waitingOrderId: order.id }}>
+        {t('Play while you wait')}
+      </Link>
+    )}
     <section className="rounded-2xl border border-slate-200/70 bg-white p-5 text-center sm:p-6">
       <span aria-hidden="true" className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-orange-50 text-2xl font-bold text-orange-600">{isCompleted || currentStatus === 'received' ? '✓' : isReady ? '✓' : '◷'}</span>
       <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-slate-900">{title}</h1>

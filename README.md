@@ -54,7 +54,7 @@ You need Node.js, npm, a development PostgreSQL database and a Supabase project 
    npm --prefix server ci
    ```
 
-2. Follow the [development guide](docs/development.md) to create the local environment files and set up a separate test database. Installing packages alone does not create staff accounts.
+2. Configure the local environment files and set up a separate development database and Supabase project. Installing packages alone does not create staff accounts.
 
 3. Start the backend and frontend in two terminals:
 
@@ -69,13 +69,3 @@ You need Node.js, npm, a development PostgreSQL database and a Supabase project 
 4. Open the local address shown in the terminal, usually `http://localhost:5173`.
 
 Do not use real restaurant data or production passwords for local testing.
-
-## More information
-
-- [Development guide and test commands](docs/development.md)
-- [Feature guides](docs/README.md)
-- [Kitchen printing](docs/kitchen-ticket-printing.md)
-- [Order notifications](docs/order-push-notifications.md)
-- [Future feature ideas](docs/future-features.md)
-
-Some changes may still be local and not yet on the live website. The guides include device tests and older development notes; a file in this repository does not mean that feature is ready for daily use.

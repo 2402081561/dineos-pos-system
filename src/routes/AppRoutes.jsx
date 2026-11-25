@@ -50,6 +50,8 @@ const ClosingDetails = lazy(() => import('../pages/cashier/ClosingDetails'))
 const Refunds = lazy(() => import('../pages/admin/Refunds'))
 const RefundRecord = lazy(() => import('../pages/admin/RefundRecord'))
 
+const CatchIngredients = lazy(() => import('../pages/customer/CatchIngredients'))
+
 function AppRoutes() {
   return (
     <Routes>
@@ -61,6 +63,7 @@ function AppRoutes() {
           <Route path="tracking" element={<Tracking />} />
           <Route path="menu" element={<Menu />} />
           <Route path="more" element={<More />} />
+          <Route path="more/catch" element={<CatchIngredients />} />
           <Route path="menu/:itemId" element={<FoodDetails />} />
           <Route path="cart" element={<Cart />} />
           <Route path="service-requests" element={<ServiceRequests />} />

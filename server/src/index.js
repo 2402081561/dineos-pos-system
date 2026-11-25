@@ -2,6 +2,7 @@ import 'dotenv/config'
 import { createRuntimeDiagnostics, registerLivenessRoute } from './runtimeDiagnostics.js'
 import { registerTakeawayQrRoutes, pickupFieldsSql, pickupReference, addPickupIdentity } from './takeawayQr.js'
 import { orderPushConfig, registerOrderPushRoutes, createOrderPushWorker } from './orderPush.js'
+import { createTelegramOrderNotice } from './telegramOrderNotice.js'
 import { identifierInput, registerOrderIdentifierRoutes } from './orderIdentifiers.js'
 import { registerTableVisitMoveRoutes } from './tableVisitMoves.js'
 import { registerWalkInAssignmentRoutes } from './walkInAssignments.js'
@@ -72,6 +73,7 @@ const verifySupabaseAccessToken = createSupabaseTokenVerifier({ supabaseUrl })
 const requireAuthenticatedUser = createAuthenticatedUserMiddleware({ verifyToken: verifySupabaseAccessToken, pool })
 const pushConfig = orderPushConfig(process.env)
 const orderPushWorker = createOrderPushWorker({ pool, config: pushConfig })
+const notifyTelegramOfOrder = createTelegramOrderNotice()
 registerOrderPushRoutes(app, { pool, requireAuthenticatedUser, requireRole, config: pushConfig })
 const memberPublishableKey = String(process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY ?? '').trim()
 const emailConfig = memberEmailConfig(process.env)
@@ -301,7 +303,7 @@ async function insertPreparedOrder(client, { tableSessionId, customerSessionId, 
   [tableSessionId, customerSessionId, memberId, bill.subtotal, bill.serviceCharge, bill.sst, bill.grandTotal, requestId, bill.serviceChargeRate, bill.sstRate, addition.rows[0].present, orderType])
   for (const item of bill.items) await client.query('INSERT INTO order_items (order_id, menu_item_id, item_name, unit_price, quantity, notes, selections, option_snapshot, order_type) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)', [created.rows[0].id, item.id, item.name, item.unitPrice, item.quantity, item.notes, JSON.stringify(item.selections), JSON.stringify(item.optionSnapshot), item.orderType])
   if(takeawayReference !== undefined) Object.assign(created.rows[0],await addPickupIdentity(client,created.rows[0].id,takeawayReference))
-  return created
+  return publicOrder ? { ...created, noticeItems: bill.items.map(({ name, quantity, optionSnapshot, notes }) => ({ name, quantity, optionSnapshot, notes })) } : created
 }
 
 registerTakeAwayRoutes(app, { pool, requireAuthenticatedUser, requireRole })
@@ -476,6 +478,7 @@ app.post('/api/v1/public/orders', requireCustomerSession, async (request, respon
     if (session.rows[0].table_session_id && session.rows[0].table_session_id !== request.customerSession.tableSessionId) throw new PosValidationError('Your table visit changed. Refresh before submitting the same order.',409)
     const created = await insertPreparedOrder(client, { tableSessionId: request.customerSession.tableSessionId, customerSessionId: request.customerSession.id, memberId: request.customerSession.isSharedTable ? null : request.customerSession.memberId, cartItems, requestId, publicOrder: true, settingsRevision: request.body?.settingsRevision, orderType: request.body?.orderType, ...(request.customerSession.isTakeawayQr ? { takeawayReference: session.rows[0].nickname } : {}) })
     await client.query('COMMIT')
+    void notifyTelegramOfOrder(created.rows[0], request.customerSession, created.noticeItems)
     return response.status(201).json({ order: created.rows[0], duplicate: false })
   } catch (error) {
     await client.query('ROLLBACK')
